@@ -1,0 +1,29 @@
+#--- Core Web Framework ---
+
+Flask
+
+#--- API and Networking ---
+
+Flask-CORS
+Flask-RESTful
+PyJWT
+requests
+
+#--- Real-time Communication ---
+
+Flask-SocketIO
+
+#--- Database / Geo-Spatial ---
+
+SQLAlchemy
+psycopg2-binary
+
+#--- Asynchronous Tasks (Future Drone Processing) ---
+
+celery
+redis
+
+#--- Geo-Spatial Libraries (For PostGIS integration) ---
+
+Shapely
+Fiona

@@ -1,0 +1,25 @@
+dependencies
+
+/node_modules
+/.venv
+/venv
+
+environment files
+
+.env
+.flaskenv
+
+python artifacts
+
+pycache/
+*.pyc
+*.pyo
+*.pyd
+
+frontend build output
+
+/frontend/dist
+
+database files (if local, not recommended for real DB)
+
+*.sqlite
