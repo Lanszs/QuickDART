@@ -16,7 +16,6 @@ Flask-SocketIO
 #--- Database / Geo-Spatial ---
 
 SQLAlchemy
-psycopg2-binary
 
 #--- Asynchronous Tasks (Future Drone Processing) ---
 

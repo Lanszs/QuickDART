@@ -1,57 +1,30 @@
 import os
 from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, declarative_base
 
-# ----------------------------------------------------------------------
-# 1. Configuration (Move this to config.py later)
-# ----------------------------------------------------------------------
+# --- 1. Database Configuration ---
 
-# Using PostgreSQL + PostGIS (as recommended)
-# You MUST replace 'postgres:password@localhost:5432/quickdart_db' with your actual credentials.
+# **CRITICAL FIX:** We explicitly specify the SQLite dialect using 'sqlite+pysqlite:///'
+# This ensures SQLAlchemy does not incorrectly try to load the PostgreSQL driver (psycopg2) 
+# which is now missing from the environment, resolving the ModuleNotFoundError.
+
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
-    "postgresql+psycopg2://user:password@localhost:5432/quickdart_db" 
-    # NOTE: You will need to install psycopg2 for PostgreSQL connectivity
+    "sqlite+pysqlite:///quickdart_dev.db" 
 )
 
-# ----------------------------------------------------------------------
-# 2. Database Initialization
-# ----------------------------------------------------------------------
+# SQLite specific argument: required for concurrent access by Flask threads.
+# We apply connect_args only if the URL indicates SQLite.
+connect_args = {"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
 
-# Create the SQLAlchemy engine
-# pool_pre_ping checks the connection before use, preventing stale connections
+# --- 2. SQLAlchemy Engine ---
 engine = create_engine(
-    DATABASE_URL, 
-    pool_pre_ping=True
+    DATABASE_URL,
+    echo=False, # Set to True for debugging SQL statements
+    # Pass connection arguments required for SQLite
+    connect_args=connect_args
 )
 
-# Create a session factory
+# --- 3. Session and Base ---
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-# Base class for declarative class definitions (your models)
 Base = declarative_base()
-
-# ----------------------------------------------------------------------
-# 3. Utility Function
-# ----------------------------------------------------------------------
-
-def get_db():
-    """
-    Dependency to yield a new database session. 
-    Use this function in your Flask routes to manage the connection life cycle.
-    """
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-# Example usage of get_db in a future route:
-# @app.route('/test', methods=['GET'])
-# def test_db_connection():
-#     try:
-#         next(get_db())
-#         return jsonify({'status': 'Database connection successful'}), 200
-#     except Exception as e:
-#         return jsonify({'status': 'Database connection failed', 'error': str(e)}), 500
