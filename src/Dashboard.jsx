@@ -1,13 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Map as MapIcon, FileUp, LogOut, Activity, Users, FileText, Settings, RefreshCw } from 'lucide-react'; // Icons matching your package.json
 import IncidentMap from './IncidentMap';
+import AssetsTeams from './AssetsTeams';
+import { Map as MapIcon, FileUp, LogOut, Activity, Users, FileText, Settings, RefreshCw } from 'lucide-react';
 
 const Dashboard = ({ userRole, onLogout }) => {
+    // State for Active Tab (Default to 'incidents')
+    const [activeTab, setActiveTab] = useState('incidents');
+    
     const [uploadedFile, setUploadedFile] = useState(null);
-
+    
+    // State for Reports
     const [reports, setReports] = useState([]);
     const [isLoadingReports, setIsLoadingReports] = useState(true);
 
+    // Fetch Logic
     const fetchReports = async () => {
         try {
             const response = await fetch('http://127.0.0.1:5000/api/v1/reports');
@@ -24,7 +30,7 @@ const Dashboard = ({ userRole, onLogout }) => {
 
     useEffect(() => {
         fetchReports();
-        // Optional: Poll every 5 seconds for "Real-Time" updates
+        // Optional: Poll every 5 seconds
         const interval = setInterval(fetchReports, 5000);
         return () => clearInterval(interval);
     }, []);
@@ -33,11 +39,9 @@ const Dashboard = ({ userRole, onLogout }) => {
         const file = event.target.files[0];
         if (file) {
             setUploadedFile(file);
-            console.log("File selected:", file.name);
         }
     };
 
-    console.log("DEBUG CHECK:", IncidentMap);
     return (
         <div className="flex flex-col h-screen w-full bg-gray-100">
             {/* --- Header --- */}
@@ -48,7 +52,6 @@ const Dashboard = ({ userRole, onLogout }) => {
                 </h1>
                 
                 <div className="flex items-center gap-4 text-sm">
-                    {/* Hidden File Input */}
                     <input 
                         type="file" 
                         id="image-upload" 
@@ -56,20 +59,16 @@ const Dashboard = ({ userRole, onLogout }) => {
                         onChange={handleFileChange}
                         className="hidden" 
                     />
-
-                    {/* Upload Button */}
                     <label htmlFor="image-upload" className="flex items-center gap-2 bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded cursor-pointer transition-colors">
                         <FileUp size={16} />
                         Upload Image
                     </label>
 
-                    {/* User Info */}
                     <div className="hidden md:block text-right">
-                        <div className="font-semibold">{userRole}</div>
-                        <div className="text-xs opacity-75">Agent: Testing</div>
+                        <div className="font-semibold">{userRole || "Agent"}</div>
+                        <div className="text-xs opacity-75">Status: Active</div>
                     </div>
 
-                    {/* Logout */}
                     <button 
                         onClick={onLogout}
                         className="flex items-center gap-2 bg-red-600 hover:bg-red-700 px-3 py-2 rounded text-white transition-colors"
@@ -84,77 +83,101 @@ const Dashboard = ({ userRole, onLogout }) => {
                 {/* --- Sidebar --- */}
                 <nav className="w-64 bg-white shadow-lg hidden md:flex flex-col p-4 gap-2">
                     <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Quick Actions</div>
-                    <NavButton active icon={<Activity size={18} />} label="Incidents" />
-                    <NavButton icon={<Users size={18} />} label="Assets & Teams" />
+                    
+                    <NavButton 
+                        active={activeTab === 'incidents'} 
+                        onClick={() => setActiveTab('incidents')}
+                        icon={<Activity size={18} />} 
+                        label="Incidents" 
+                    />
+                    <NavButton 
+                        active={activeTab === 'assets'} 
+                        onClick={() => setActiveTab('assets')}
+                        icon={<Users size={18} />} 
+                        label="Assets & Teams" 
+                    />
                     <NavButton icon={<FileText size={18} />} label="Damage Reports" />
+                    
                     <div className="flex-grow"></div>
                     <NavButton icon={<Settings size={18} />} label="Settings" />
                 </nav>
 
                 {/* --- Main Content --- */}
-                <main className="flex-1 p-6 overflow-y-auto">
-                    {/* File Upload Alert */}
-                    {uploadedFile && (
-                        <div className="mb-6 bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded shadow-sm" role="alert">
-                            <p className="font-bold flex items-center gap-2">
-                                ✅ File Selected: {uploadedFile.name}
-                            </p>
-                            <p className="text-sm">Type: {uploadedFile.type} | Size: {(uploadedFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                <main className="flex-1 p-0 overflow-y-auto">
+                    
+                    {/* VIEW 1: INCIDENTS DASHBOARD */}
+                    {activeTab === 'incidents' && (
+                        <div className="p-6">
+                            {uploadedFile && (
+                                <div className="mb-6 bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded shadow-sm" role="alert">
+                                    <p className="font-bold flex items-center gap-2">✅ File Selected: {uploadedFile.name}</p>
+                                </div>
+                            )}
+
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
+                                {/* Map Panel */}
+                                <div className="lg:col-span-2 bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col h-[700px]">
+                                    <h2 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                                        <MapIcon className="text-blue-600" /> Live Incident Map
+                                    </h2>
+                                    <div className="flex-1 rounded-lg overflow-hidden border border-gray-300 relative z-0">
+                                        <IncidentMap reports={reports} />
+                                    </div>
+                                </div>
+
+                                {/* Incident Log Panel */}
+                                <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col h-[600px]">
+                                    <div className="flex justify-between items-center mb-4">
+                                        <h2 className="text-lg font-semibold text-gray-800">Incident Log</h2>
+                                        <button onClick={fetchReports} className="text-gray-500 hover:text-blue-600" title="Refresh">
+                                            <RefreshCw size={16} />
+                                        </button>
+                                    </div>
+                                    
+                                    <div className="flex-1 overflow-y-auto pr-2 space-y-3">
+                                        {isLoadingReports ? (
+                                            <div className="text-center text-gray-400 py-4">Loading reports...</div>
+                                        ) : reports.length === 0 ? (
+                                            <div className="text-center text-gray-400 py-4">No active incidents.</div>
+                                        ) : (
+                                            reports.map((report) => (
+                                                <div key={report.id} className="p-3 bg-gray-50 rounded-lg border border-gray-100 hover:shadow-md transition-shadow">
+                                                    <div className="flex justify-between items-start mb-1">
+                                                        <span className="font-bold text-gray-800 text-sm">{report.title}</span>
+                                                        <StatusBadge status={report.status} />
+                                                    </div>
+                                                    <p className="text-xs text-gray-600 mb-2">{report.description}</p>
+                                                    <div className="flex justify-between items-center text-xs text-gray-400">
+                                                        <span>📍 {report.location}</span>
+                                                        <span>{report.timestamp}</span>
+                                                    </div>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     )}
 
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        {/* Map Panel */}
-                        <div className="lg:col-span-2 bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col">
-                            <h2 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-                                <MapIcon className="text-blue-600" /> Live Incident Map
-                            </h2>
-                            <div className="flex-1 rounded-lg overflow-hidden border border-gray-300 relative z-0">
-                               <IncidentMap reports={reports} />
-                            </div>
-                        </div>
+                    {/* VIEW 2: ASSETS & TEAMS */}
+                    {activeTab === 'assets' && (
+                        <AssetsTeams />
+                    )}
 
-                        {/* Incident Log Panel */}
-                       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col h-[600px]">
-                            <div className="flex justify-between items-center mb-4">
-                                <h2 className="text-lg font-semibold text-gray-800">Incident Log</h2>
-                                <button onClick={fetchReports} className="text-gray-500 hover:text-blue-600" title="Refresh">
-                                    <RefreshCw size={16} />
-                                </button>
-                            </div>
-                            
-                            <div className="flex-1 overflow-y-auto pr-2 space-y-3">
-                                {isLoadingReports ? (
-                                    <div className="text-center text-gray-400 py-4">Loading reports...</div>
-                                ) : reports.length === 0 ? (
-                                    <div className="text-center text-gray-400 py-4">No active incidents.</div>
-                                ) : (
-                                    reports.map((report) => (
-                                        <div key={report.id} className="p-3 bg-gray-50 rounded-lg border border-gray-100 hover:shadow-md transition-shadow">
-                                            <div className="flex justify-between items-start mb-1">
-                                                <span className="font-bold text-gray-800 text-sm">{report.title}</span>
-                                                <StatusBadge status={report.status} />
-                                            </div>
-                                            <p className="text-xs text-gray-600 mb-2">{report.description}</p>
-                                            <div className="flex justify-between items-center text-xs text-gray-400">
-                                                <span>📍 {report.location}</span>
-                                                <span>{report.timestamp}</span>
-                                            </div>
-                                        </div>
-                                    ))
-                                )}
-                            </div>
-                        </div>
-                    </div>
                 </main>
             </div>
         </div>
     );
 };
 
-// Helper component for sidebar buttons
-const NavButton = ({ icon, label, active }) => (
-    <button className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${active ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}`}>
+// --- Helpers ---
+
+const NavButton = ({ icon, label, active, onClick }) => (
+    <button 
+        onClick={onClick}
+        className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors w-full text-left ${active ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}`}
+    >
         {icon}
         {label}
     </button>

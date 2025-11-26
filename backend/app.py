@@ -4,6 +4,7 @@ from flask_cors import CORS # 1. Import CORS
 from models.user import authenticate_user
 from models.database import SessionLocal 
 from models.report import Report
+from models.resources import Asset, Team # <--- NEW IMPORT
 
 app = Flask(__name__)
 
@@ -11,6 +12,24 @@ app = Flask(__name__)
 # This forces the backend to recognize and accept requests ONLY from the
 # React development server running at port 3000.
 CORS(app, resources={r"/api/*": {"origins": "http://localhost:3000"}})
+
+
+# --- NEW ROUTES ---
+@app.route('/api/v1/resources', methods=['GET'])
+def get_resources():
+    session = SessionLocal()
+    try:
+        assets = session.query(Asset).all()
+        teams = session.query(Team).all()
+        return jsonify({
+            "assets": [a.to_dict() for a in assets],
+            "teams": [t.to_dict() for t in teams]
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
 
 # Your existing status route
 @app.route('/api/v1/status', methods=['GET'])

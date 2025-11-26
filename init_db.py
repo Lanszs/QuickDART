@@ -7,6 +7,7 @@ sys.path.append(os.getcwd())
 from backend.models.database import Base, engine, SessionLocal
 from backend.models.user import User
 from backend.models.report import Report    
+from backend.models.resources import Asset, Team # <--- NEW IMPORT 
 
 def init_db():
     print("Connecting to database...")
@@ -44,6 +45,14 @@ def init_db():
             Report(title="Road Blockage", description="Fallen tree.", status="Cleared", location="Sector B", latitude=14.7480, longitude=120.9400),
         ]
         session.add_all(reports)
+
+        teams = [
+            Team(name="Alpha Squad", specialization="Search & Rescue", status="Deployed", personnel_count=5),
+            Team(name="Medic Team Bravo", specialization="Medical", status="Idle", personnel_count=3),
+            Team(name="Logistics Crew", specialization="Support", status="Resting", personnel_count=10),
+        ]
+        session.add_all(teams)
+        # ---------------------
         
         session.commit()
         print("Database populated successfully!")
