@@ -5,6 +5,13 @@ from models.user import authenticate_user
 from models.database import SessionLocal 
 from models.report import Report
 from models.resources import Asset, Team # <--- NEW IMPORT
+import os
+import io
+import torch
+import torch.nn as nn
+from torchvision import models, transforms
+from PIL import Image
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -13,6 +20,42 @@ app = Flask(__name__)
 # React development server running at port 3000.
 CORS(app, resources={r"/api/*": {"origins": "http://localhost:3000"}})
 
+TYPE_CLASS_NAMES = ['Earthquake', 'Fire', 'Flood']
+DAMAGE_CLASS_NAMES = ['Destroyed', 'Major', 'Minor', 'No Damage']
+
+
+def load_model(path, num_classes):
+    print(f"Loading model from {path}...")
+    try:
+        # Re-create the exact architecture used in training
+        model = models.resnet50(weights=None) 
+        num_ftrs = model.fc.in_features
+        model.fc = nn.Linear(num_ftrs, num_classes)
+        
+        # Load weights
+        model.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
+        model.eval()
+        print("Model loaded successfully!")
+        return model
+    except Exception as e:
+        print(f"ERROR: Could not load model. {e}")
+        return None
+
+# Robust path finding (Works whether you run from root or backend folder)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TYPE_MODEL_PATH = os.path.join(BASE_DIR, 'ml_engine', 'disaster_type_model.pth')
+DAMAGE_MODEL_PATH = os.path.join(BASE_DIR, 'ml_engine', 'damage_assessment_model.pth')
+
+print("--- Loading AI Models ---")
+type_model = load_model(TYPE_MODEL_PATH, len(TYPE_CLASS_NAMES))
+damage_model = load_model(DAMAGE_MODEL_PATH, len(DAMAGE_CLASS_NAMES))
+
+# Image Preprocessing
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+])
 
 # --- NEW ROUTES ---
 @app.route('/api/v1/resources', methods=['GET'])
@@ -80,7 +123,81 @@ def get_reports():
     finally:
         session.close()
 
+@app.route('/api/v1/analyze', methods=['POST'])
+def analyze_image():
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+
+    if not type_model or not damage_model:
+        return jsonify({"error": "Models not loaded on server"}), 500
+
+    try:
+        # 1. Process Image
+        image_bytes = file.read()
+        image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+        tensor = transform(image).unsqueeze(0) 
+        
+        # 2. Predict Disaster TYPE
+        with torch.no_grad():
+            type_outputs = type_model(tensor)
+            _, type_preds = torch.max(type_outputs, 1)
+            type_probs = torch.nn.functional.softmax(type_outputs, dim=1)
+            type_conf = type_probs[0][type_preds].item() * 100
+            
+        detected_type = TYPE_CLASS_NAMES[type_preds.item()]
+
+        # 3. Predict Damage LEVEL
+        with torch.no_grad():
+            damage_outputs = damage_model(tensor)
+            _, damage_preds = torch.max(damage_outputs, 1)
+            # We don't need confidence for this one as much, just the label
+            
+        detected_damage = DAMAGE_CLASS_NAMES[damage_preds.item()]
+        
+        return jsonify({
+            "type": detected_type,
+            "confidence": f"{type_conf:.2f}%",
+            "damage": detected_damage # Now returns real data!
+        })
+
+    except Exception as e:
+        print(f"Prediction Error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/v1/reports', methods=['POST'])
+def create_report():
+    session = SessionLocal()
+    try:
+        data = request.get_json()
+        
+        # Create the new Report object
+        new_report = Report(
+            title=data.get('title'),
+            description=data.get('description'),
+            status=data.get('status', 'Active'),
+            location=data.get('location', 'Unknown'),
+            latitude=data.get('latitude'),
+            longitude=data.get('longitude'),
+            timestamp=datetime.utcnow()
+        )
+        
+        session.add(new_report)
+        session.commit()
+        session.refresh(new_report)
+        
+        return jsonify(new_report.to_dict()), 201
+        
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
 if __name__ == '__main__':
     print("INFO:root:Starting Flask API server on port 5000...")
     # Running it on 0.0.0.0 for accessibility
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, use_reloader=False, host='0.0.0.0', port=5000)

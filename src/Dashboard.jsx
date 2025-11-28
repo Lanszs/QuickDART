@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import IncidentMap from './IncidentMap';
 import AssetsTeams from './AssetsTeams';
-import { Map as MapIcon, FileUp, LogOut, Activity, Users, FileText, Settings, RefreshCw } from 'lucide-react';
+import { Map as MapIcon, FileUp, LogOut, Activity, Users, FileText, Settings, RefreshCw, AlertTriangle } from 'lucide-react';
 
 const Dashboard = ({ userRole, onLogout }) => {
     // State for Active Tab (Default to 'incidents')
@@ -12,6 +12,41 @@ const Dashboard = ({ userRole, onLogout }) => {
     // State for Reports
     const [reports, setReports] = useState([]);
     const [isLoadingReports, setIsLoadingReports] = useState(true);
+
+    const [analysisResult, setAnalysisResult] = useState(null);
+    const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+    const saveReport = async () => {
+        if (!analysisResult) return;
+
+        const newReport = {
+            title: `Detected: ${analysisResult.type}`,
+            description: `AI Analysis Confidence: ${analysisResult.confidence}. Damage Assessment: ${analysisResult.damage}`,
+            status: 'Active',
+            location: 'Sector 4 (Detected)', // Placeholder location
+            latitude: 14.7546, // Using Marilao center for demo
+            longitude: 120.9466
+        };
+
+        try {
+            const response = await fetch('http://127.0.0.1:5000/api/v1/reports', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(newReport)
+            });
+
+            if (response.ok) {
+                alert("Report Saved to Database!");
+                setAnalysisResult(null); // Clear the result
+                setUploadedFile(null);   // Clear the file input
+                fetchReports();          // Refresh the list immediately
+            } else {
+                alert("Failed to save report.");
+            }
+        } catch (error) {
+            console.error("Error saving report:", error);
+        }
+    };
 
     // Fetch Logic
     const fetchReports = async () => {
@@ -35,10 +70,33 @@ const Dashboard = ({ userRole, onLogout }) => {
         return () => clearInterval(interval);
     }, []);
 
-    const handleFileChange = (event) => {
+  const handleFileChange = async (event) => {
         const file = event.target.files[0];
         if (file) {
             setUploadedFile(file);
+            setAnalysisResult(null); // Reset previous result
+            setIsAnalyzing(true);
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('http://127.0.0.1:5000/api/v1/analyze', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    setAnalysisResult(result);
+                } else {
+                    console.error("Analysis failed");
+                }
+            } catch (error) {
+                console.error("Error uploading file:", error);
+            } finally {
+                setIsAnalyzing(false);
+            }
         }
     };
 
@@ -61,7 +119,7 @@ const Dashboard = ({ userRole, onLogout }) => {
                     />
                     <label htmlFor="image-upload" className="flex items-center gap-2 bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded cursor-pointer transition-colors">
                         <FileUp size={16} />
-                        Upload Image
+                        {isAnalyzing ? "Analyzing..." : "Upload Image"}
                     </label>
 
                     <div className="hidden md:block text-right">
@@ -108,9 +166,55 @@ const Dashboard = ({ userRole, onLogout }) => {
                     {/* VIEW 1: INCIDENTS DASHBOARD */}
                     {activeTab === 'incidents' && (
                         <div className="p-6">
+                            {/* --- AI ANALYSIS & ACTION BOX --- */}
                             {uploadedFile && (
-                                <div className="mb-6 bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded shadow-sm" role="alert">
-                                    <p className="font-bold flex items-center gap-2">✅ File Selected: {uploadedFile.name}</p>
+                                <div className="mb-6 bg-white border border-gray-200 p-4 rounded-xl shadow-sm flex flex-col gap-3">
+                                    <div className="flex items-start gap-4">
+                                        <div className="p-3 bg-blue-50 rounded-lg">
+                                            <FileUp className="text-blue-600" size={24} />
+                                        </div>
+                                        <div className="flex-1">
+                                            <h3 className="font-bold text-gray-800">File Uploaded: {uploadedFile.name}</h3>
+                                            
+                                            {isAnalyzing && (
+                                                <p className="text-sm text-gray-500 animate-pulse mt-1">🤖 AI is analyzing the scene...</p>
+                                            )}
+
+                                            {analysisResult && (
+                                                <div className="mt-3">
+                                                    <div className="flex items-center gap-4 mb-2">
+                                                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-sm font-medium bg-red-100 text-red-800">
+                                                            <AlertTriangle size={14} />
+                                                            Detected: {analysisResult.type}
+                                                        </span>
+                                                        <span className="text-xs text-gray-500">Confidence: {analysisResult.confidence}</span>
+                                                    </div>
+                                                    <p className="text-sm text-gray-600">
+                                                        <strong>Assessment:</strong> {analysisResult.damage}
+                                                    </p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Action Buttons */}
+                                    {analysisResult && (
+                                        <div className="flex gap-3 mt-2 pl-[60px]">
+                                            <button 
+                                                onClick={saveReport}
+                                                className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors shadow-sm flex items-center gap-2"
+                                            >
+                                                <FileText size={16} />
+                                                Confirm & Save to Log
+                                            </button>
+                                            <button 
+                                                onClick={() => { setUploadedFile(null); setAnalysisResult(null); }}
+                                                className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-bold transition-colors"
+                                            >
+                                                Discard
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
