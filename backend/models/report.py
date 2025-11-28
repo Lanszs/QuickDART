@@ -14,6 +14,8 @@ class Report(Base):
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
 
+    damage_level = Column(String, default="Pending")
+
     def to_dict(self):
         """Helper to convert object to JSON-ready dictionary"""
         return {
@@ -24,5 +26,6 @@ class Report(Base):
             "timestamp": self.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
             "location": self.location,
             "lat": self.latitude, 
-            "lng": self.longitude
+            "lng": self.longitude,
+            "damage_level": self.damage_level
         }

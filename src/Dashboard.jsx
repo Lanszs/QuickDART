@@ -1,7 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import IncidentMap from './IncidentMap';
 import AssetsTeams from './AssetsTeams';
-import { Map as MapIcon, FileUp, LogOut, Activity, Users, FileText, Settings, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Map as MapIcon, FileUp, LogOut, Activity, Users, FileText, Settings, RefreshCw, AlertTriangle, Clock, ChevronDown, ChevronUp, BarChart2 } from 'lucide-react';
+import DamageReports from './DamageReports';
+import { io } from 'socket.io-client';
+import { ToastContainer, toast } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
+import Statistics from './Statistics'; // <--- NEW IMPORT
+
 
 const Dashboard = ({ userRole, onLogout }) => {
     // State for Active Tab (Default to 'incidents')
@@ -9,12 +15,18 @@ const Dashboard = ({ userRole, onLogout }) => {
     
     const [uploadedFile, setUploadedFile] = useState(null);
     
+    const [expandedReportId, setExpandedReportId] = useState(null);
+
     // State for Reports
     const [reports, setReports] = useState([]);
     const [isLoadingReports, setIsLoadingReports] = useState(true);
 
+    const [time, setTime] = useState(new Date());
+
     const [analysisResult, setAnalysisResult] = useState(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+    const [reportToValidate, setReportToValidate] = useState(null);
 
     const saveReport = async () => {
         if (!analysisResult) return;
@@ -25,7 +37,8 @@ const Dashboard = ({ userRole, onLogout }) => {
             status: 'Active',
             location: 'Sector 4 (Detected)', // Placeholder location
             latitude: 14.7546, // Using Marilao center for demo
-            longitude: 120.9466
+            longitude: 120.9466,
+            damage_level: analysisResult.damage
         };
 
         try {
@@ -54,6 +67,10 @@ const Dashboard = ({ userRole, onLogout }) => {
             const response = await fetch('http://127.0.0.1:5000/api/v1/reports');
             if (response.ok) {
                 const data = await response.json();
+
+                console.log("--- DEBUG: FETCHED REPORTS ---"); // <--- LOG 4
+                console.log("First report sample:", data[0]);
+
                 setReports(data);
             }
         } catch (error) {
@@ -64,10 +81,52 @@ const Dashboard = ({ userRole, onLogout }) => {
     };
 
     useEffect(() => {
+        // Initial Load
         fetchReports();
-        // Optional: Poll every 5 seconds
-        const interval = setInterval(fetchReports, 5000);
-        return () => clearInterval(interval);
+
+        // Connect to Backend Socket
+        const socket = io('http://127.0.0.1:5000');
+
+        socket.on('connect', () => {
+            console.log("✅ Connected to WebSocket Server");
+        });
+
+        // Listen for the 'new_report' event from app.py
+        socket.on('new_report', (newReport) => {
+            console.log("⚡ LIVE UPDATE RECEIVED:", newReport);
+            
+            // Add the new report to the TOP of the list instantly
+            setReports((prevReports) => [newReport, ...prevReports]);
+            
+            // Optional: Play a sound or show a toast notification here
+            toast.error(
+                <div>
+                    <strong>New Incident Reported!</strong>
+                    <div className="text-xs mt-1">{newReport.title}</div>
+                    <div className="text-xs text-gray-200">{newReport.location}</div>
+                </div>, 
+                {
+                    position: "top-right",
+                    autoClose: 7000, // Stay for 7 seconds
+                    hideProgressBar: false,
+                    closeOnClick: true,
+                    pauseOnHover: true,
+                    draggable: true,
+                    theme: "colored",
+                }
+            );
+        });
+
+        // Clock Timer
+        const clockInterval = setInterval(() => {
+            setTime(new Date());
+        }, 1000);
+
+        // Cleanup: Disconnect socket when leaving the dashboard
+        return () => {
+            socket.disconnect();
+            clearInterval(clockInterval);
+        };
     }, []);
 
   const handleFileChange = async (event) => {
@@ -100,6 +159,19 @@ const Dashboard = ({ userRole, onLogout }) => {
         }
     };
 
+    const toggleReport = (id) => {
+        if (expandedReportId === id) {
+            setExpandedReportId(null); // Collapse if already open
+        } else {
+            setExpandedReportId(id);   // Expand the new one
+        }
+    };
+
+    const handleValidateClick = (reportId) => {
+        setReportToValidate(reportId);  // 1. Remember the ID
+        setActiveTab('damage_reports'); // 2. Switch the Tab
+    };
+
     return (
         <div className="flex flex-col h-screen w-full bg-gray-100">
             {/* --- Header --- */}
@@ -121,6 +193,18 @@ const Dashboard = ({ userRole, onLogout }) => {
                         <FileUp size={16} />
                         {isAnalyzing ? "Analyzing..." : "Upload Image"}
                     </label>
+
+                    <div className="hidden md:flex items-center gap-3 bg-blue-800/50 px-4 py-1.5 rounded-lg border border-blue-700/50 mx-2">
+                        <Clock size={18} className="text-blue-300" />
+                        <div className="flex flex-col leading-tight text-right">
+                            <span className="text-[10px] font-bold text-blue-200 uppercase tracking-wider">
+                                {time.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+                            </span>
+                            <span className="text-sm font-bold font-mono text-white">
+                                {time.toLocaleTimeString()}
+                            </span>
+                        </div>
+                    </div>
 
                     <div className="hidden md:block text-right">
                         <div className="font-semibold">{userRole || "Agent"}</div>
@@ -154,7 +238,18 @@ const Dashboard = ({ userRole, onLogout }) => {
                         icon={<Users size={18} />} 
                         label="Assets & Teams" 
                     />
-                    <NavButton icon={<FileText size={18} />} label="Damage Reports" />
+                    <NavButton 
+                        active={activeTab === 'damage_reports'} 
+                        onClick={() => setActiveTab('damage_reports')}
+                        icon={<FileText size={18} />} 
+                        label="Damage Reports" 
+                    />
+                    <NavButton 
+                        active={activeTab === 'statistics'} 
+                        onClick={() => setActiveTab('statistics')}
+                        icon={<BarChart2 size={18} />} 
+                        label="Analytics" 
+                    />
                     
                     <div className="flex-grow"></div>
                     <NavButton icon={<Settings size={18} />} label="Settings" />
@@ -232,8 +327,13 @@ const Dashboard = ({ userRole, onLogout }) => {
                                 {/* Incident Log Panel */}
                                 <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col h-[600px]">
                                     <div className="flex justify-between items-center mb-4">
-                                        <h2 className="text-lg font-semibold text-gray-800">Incident Log</h2>
-                                        <button onClick={fetchReports} className="text-gray-500 hover:text-blue-600" title="Refresh">
+                                        <div className="flex items-center gap-2">
+                                            <h2 className="text-lg font-semibold text-gray-800">Incident Log</h2>
+                                            <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs font-bold border border-gray-200">
+                                                {reports.length}
+                                            </span>
+                                        </div>
+                                            <button onClick={fetchReports} className="text-gray-500 hover:text-blue-600" title="Refresh">
                                             <RefreshCw size={16} />
                                         </button>
                                     </div>
@@ -245,16 +345,69 @@ const Dashboard = ({ userRole, onLogout }) => {
                                             <div className="text-center text-gray-400 py-4">No active incidents.</div>
                                         ) : (
                                             reports.map((report) => (
-                                                <div key={report.id} className="p-3 bg-gray-50 rounded-lg border border-gray-100 hover:shadow-md transition-shadow">
-                                                    <div className="flex justify-between items-start mb-1">
-                                                        <span className="font-bold text-gray-800 text-sm">{report.title}</span>
+                                                <div 
+                                                    key={report.id} 
+                                                    onClick={() => toggleReport(report.id)} // Click Handler
+                                                    className={`p-4 rounded-xl border transition-all cursor-pointer group ${
+                                                        expandedReportId === report.id 
+                                                        ? "bg-blue-50 border-blue-200 shadow-md" 
+                                                        : "bg-white border-gray-100 hover:border-blue-200 hover:shadow-sm"
+                                                    }`}
+                                                >
+                                                    {/* Summary Header (Always Visible) */}
+                                                    <div className="flex justify-between items-start mb-2">
+                                                        <div className="flex flex-col">
+                                                            <span className="font-bold text-gray-800 text-sm">{report.title}</span>
+                                                            <span className="text-xs text-gray-400">{report.timestamp}</span>
+                                                        </div>
                                                         <StatusBadge status={report.status} />
                                                     </div>
-                                                    <p className="text-xs text-gray-600 mb-2">{report.description}</p>
-                                                    <div className="flex justify-between items-center text-xs text-gray-400">
-                                                        <span>📍 {report.location}</span>
-                                                        <span>{report.timestamp}</span>
-                                                    </div>
+
+                                                    {/* Collapsed View: One-liner */}
+                                                    {expandedReportId !== report.id && (
+                                                        <div className="flex justify-between items-end mt-2">
+                                                            <p className="text-xs text-gray-600 line-clamp-1 w-3/4">{report.description}</p>
+                                                            <ChevronDown size={16} className="text-gray-400 group-hover:text-blue-500 transition-colors" />
+                                                        </div>
+                                                    )}
+
+                                                    {/* Expanded View: Full Details */}
+                                                    {expandedReportId === report.id && (
+                                                        <div className="mt-3 pt-3 border-t border-blue-100/50 text-sm text-gray-700 space-y-3 animate-in slide-in-from-top-2 duration-200">
+                                                            
+                                                            <div>
+                                                                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Situation Report</span>
+                                                                <p className="text-sm mt-1 leading-relaxed">{report.description}</p>
+                                                            </div>
+                                                            
+                                                            <div className="bg-white p-3 rounded-lg border border-gray-200">
+                                                                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Exact Location</span>
+                                                                <p className="text-sm font-medium text-gray-800 mt-0.5">{report.location}</p>
+                                                                
+                                                                <div className="flex items-center gap-2 mt-2 text-xs font-mono text-blue-600 bg-blue-50 px-2 py-1 rounded w-fit">
+                                                                    <MapIcon size={12} />
+                                                                    {report.lat?.toFixed(5)}, {report.lng?.toFixed(5)}
+                                                                </div>
+                                                            </div>
+
+                                                            <div className="flex justify-center pt-1">
+                                                                <ChevronUp size={16} className="text-blue-400" />
+                                                            </div>
+
+                                                            <div className="flex justify-end pt-2">
+                                                                 <button 
+                                                                    onClick={(e) => {
+                                                                            e.stopPropagation(); // Prevent toggling the card
+                                                                            handleValidateClick(report.id); // Redirect to Validation Page
+                                                                            }}
+                                                                className="flex items-center gap-2 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-blue-700 transition-colors"
+                                                                 >
+                                                             <FileText size={14} />
+                                                                    Validate Report
+                                                                 </button>
+                                                            </div>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             ))
                                         )}
@@ -269,7 +422,20 @@ const Dashboard = ({ userRole, onLogout }) => {
                         <AssetsTeams />
                     )}
 
+                    {/* VIEW 3: DAMAGE REPORTS & VALIDATION */}
+                    {activeTab === 'damage_reports' && (
+                        <DamageReports initialHighlightId={reportToValidate} />
+                    )}
+
+                    {/* VIEW 4: STATISTICS */}
+                    {activeTab === 'statistics' && (
+                        <Statistics reports={reports} />
+                    )}
+
                 </main>
+
+                <ToastContainer />
+
             </div>
         </div>
     );

@@ -1,0 +1,71 @@
+# --- Core Framework & System ---
+Flask==3.1.2
+Werkzeug==3.1.3
+click==8.3.1
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+itsdangerous==2.2.0
+colorama==0.4.6
+six==1.17.0
+
+# --- API, Networking & CORS ---
+Flask-CORS==6.0.1
+Flask-RESTful==0.3.10
+requests==2.32.5
+urllib3==2.5.0
+idna==3.11
+certifi==2025.11.12
+charset-normalizer==3.4.4
+
+# --- Real-Time & Security ---
+Flask-SocketIO==5.5.1
+python-socketio==5.15.0
+python-engineio==4.12.3
+PyJWT==2.10.1
+simple-websocket==1.1.0
+wsproto==1.3.2
+h11==0.16.0
+
+# --- Database (PostgreSQL) ---
+SQLAlchemy==2.0.44
+psycopg2-binary==2.9.11
+greenlet==3.2.4
+typing_extensions==4.15.0
+
+# --- AI & Computer Vision (Damage Assessment) ---
+torch==2.9.1
+torchvision==0.24.1
+numpy==2.3.5
+pillow==12.0.0
+sympy==1.14.0
+filelock==3.20.0
+fsspec==2025.10.0
+mpmath==1.3.0
+networkx==3.6
+
+# --- Async Tasks (Celery/Redis) ---
+celery==5.5.3
+redis==7.1.0
+kombu==5.5.4
+billiard==4.2.3
+amqp==5.3.1
+vine==5.1.0
+python-dateutil==2.9.0.post0
+pytz==2025.2
+tzdata==2025.2
+
+# --- CLI Utilities ---
+click-didyoumean==0.3.1
+click-plugins==1.1.1.2
+click-repl==0.3.0
+prompt_toolkit==3.0.52
+wcwidth==0.2.14
+setuptools==80.9.0
+packaging==25.0
+
+
+# --- TODO: GEO-SPATIAL LIBRARIES ---
+# These are currently missing from the environment. 
+# You will need to install these via Binary Wheels later for map features.
+# Shapely
+# Fiona

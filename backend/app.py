@@ -1,5 +1,6 @@
 from flask import Flask, jsonify , request
 from flask_cors import CORS # 1. Import CORS
+from flask_socketio import SocketIO, emit
 # Import the authentication logic we created in the User model
 from models.user import authenticate_user
 from models.database import SessionLocal 
@@ -12,6 +13,7 @@ import torch.nn as nn
 from torchvision import models, transforms
 from PIL import Image
 from datetime import datetime
+import requests
 
 app = Flask(__name__)
 
@@ -19,6 +21,8 @@ app = Flask(__name__)
 # This forces the backend to recognize and accept requests ONLY from the
 # React development server running at port 3000.
 CORS(app, resources={r"/api/*": {"origins": "http://localhost:3000"}})
+
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 TYPE_CLASS_NAMES = ['Earthquake', 'Fire', 'Flood']
 DAMAGE_CLASS_NAMES = ['Destroyed', 'Major', 'Minor', 'No Damage']
@@ -111,17 +115,7 @@ def login_user():
         return jsonify({"message": "Invalid credentials. Please check your Agency ID and Password.", "status": "failed"}), 401
     
 
-@app.route('/api/v1/reports', methods=['GET'])
-def get_reports():
-    session = SessionLocal()
-    try:
-        # Query all reports, sorted by newest first (descending ID)
-        reports = session.query(Report).order_by(Report.id.desc()).all()
-        return jsonify([r.to_dict() for r in reports]), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        session.close()
+
 
 @app.route('/api/v1/analyze', methods=['POST'])
 def analyze_image():
@@ -168,28 +162,103 @@ def analyze_image():
         print(f"Prediction Error: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/v1/reports', methods=['POST'])
-def create_report():
+@app.route('/api/v1/reports', methods=['GET', 'POST'])
+def handle_reports():
+    session = SessionLocal()
+    
+    if request.method == 'GET':
+        try:
+            reports = session.query(Report).order_by(Report.id.desc()).all()
+            return jsonify([r.to_dict() for r in reports]), 200
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+        finally:
+            session.close()
+            
+    elif request.method == 'POST':
+        from datetime import datetime
+        try:
+            data = request.get_json()
+            
+            print(f"--- DEBUG: BACKEND RECEIVED DATA ---") # <--- PRINT 1
+            print(f"Full Data Packet: {data}")             # <--- PRINT 2
+            print(f"Looking for 'damage_level': {data.get('damage_level')}")
+
+            # 1. Extract Coords
+            lat = data.get('latitude')
+            lng = data.get('longitude')
+            
+            # 2. Determine Location Name (Backend Side)
+            # If frontend sent a generic name, we try to find the real address
+            location_name = data.get('location', 'Unknown')
+            if lat and lng:
+                # Convert Coords -> Address Name automatically
+                location_name = get_address_from_coords(lat, lng)
+
+            print(f"DEBUG: Incoming Data -> {data}") 
+            print(f"DEBUG: Extracted Damage -> {data.get('damage_level')}")
+
+            # 3. Save Report
+            new_report = Report(
+                title=data.get('title'),
+                description=data.get('description'),
+                status=data.get('status', 'Active'),
+                location=location_name, # <--- Saves the Real Address Name!
+                latitude=lat,
+                longitude=lng,
+                timestamp=datetime.utcnow(),
+                damage_level=data.get('damage_level', 'Pending')
+            )
+            session.add(new_report)
+            session.commit()
+            session.refresh(new_report)
+
+            socketio.emit('new_report', new_report.to_dict())
+
+            return jsonify(new_report.to_dict()), 201
+        except Exception as e:
+            session.rollback()
+            return jsonify({"error": str(e)}), 500
+        finally:
+            session.close()
+
+def get_address_from_coords(lat, lng):
+    """
+    Converts Lat/Lng to a readable address using OpenStreetMap (Nominatim).
+    """
+    try:
+        url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lng}"
+        # User-Agent is required by OSM policy
+        headers = {'User-Agent': 'QuickDART/1.0 (education_project)'}
+        response = requests.get(url, headers=headers, timeout=5)
+        
+        if response.ok:
+            data = response.json()
+            # Get the full display name, or fallback to city/town
+            return data.get('display_name', f"Unknown Location ({lat}, {lng})")
+    except Exception as e:
+        print(f"Geocoding Error: {e}")
+    
+    return f"GPS: {lat}, {lng}"
+
+@app.route('/api/v1/reports/<int:report_id>', methods=['PUT'])
+def update_report(report_id):
     session = SessionLocal()
     try:
+        report = session.query(Report).filter(Report.id == report_id).first()
+        if not report:
+            return jsonify({"error": "Report not found"}), 404
+        
         data = request.get_json()
         
-        # Create the new Report object
-        new_report = Report(
-            title=data.get('title'),
-            description=data.get('description'),
-            status=data.get('status', 'Active'),
-            location=data.get('location', 'Unknown'),
-            latitude=data.get('latitude'),
-            longitude=data.get('longitude'),
-            timestamp=datetime.utcnow()
-        )
-        
-        session.add(new_report)
+        # Update fields if provided
+        if 'status' in data:
+            report.status = data['status']
+        if 'damage_level' in data:
+            report.damage_level = data['damage_level']
+            
         session.commit()
-        session.refresh(new_report)
-        
-        return jsonify(new_report.to_dict()), 201
+        return jsonify(report.to_dict()), 200
         
     except Exception as e:
         session.rollback()
@@ -200,4 +269,4 @@ def create_report():
 if __name__ == '__main__':
     print("INFO:root:Starting Flask API server on port 5000...")
     # Running it on 0.0.0.0 for accessibility
-    app.run(debug=True, use_reloader=False, host='0.0.0.0', port=5000)
+    socketio.run(app, debug=True, use_reloader=False, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)

@@ -44,7 +44,7 @@ const incidents = [
 ];
 
 // 1. Define the component function
-const IncidentMap = ({ userRole }) => {
+const IncidentMap = ({ reports = [] }) => {
     return (
         <MapContainer 
             center={MARILAO_CENTER} 
@@ -64,19 +64,22 @@ const IncidentMap = ({ userRole }) => {
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
 
-            {incidents.map((incident) => (
-                <Marker key={incident.id} position={[incident.lat, incident.lng]}>
-                    <Popup>
-                        <div className="text-sm">
-                            <strong className="block text-gray-800">{incident.type}</strong>
-                            <span className={`font-semibold ${incident.status === 'Critical' ? 'text-red-600' : 'text-blue-600'}`}>
-                                Status: {incident.status}
-                            </span>
-                            <br />
-                            <span className="text-xs text-gray-500">Coords: {incident.lat}, {incident.lng}</span>
-                        </div>
-                    </Popup>
-                </Marker>
+            {/* 2. Map over the REAL reports passed from the database */}
+            {reports.map((report) => (
+                // Only render if the report has valid coordinates
+                (report.lat && report.lng) && (
+                    <Marker key={report.id} position={[report.lat, report.lng]}>
+                        <Popup>
+                            <div className="text-sm">
+                                <strong className="block text-gray-800">{report.title}</strong>
+                                <span className={`font-semibold ${report.status === 'Critical' ? 'text-red-600' : 'text-blue-600'}`}>
+                                    Status: {report.status}
+                                </span>
+                                <p className="text-xs text-gray-600 mt-1">{report.description}</p>
+                            </div>
+                        </Popup>
+                    </Marker>
+                )
             ))}
         </MapContainer>
     );

@@ -39,13 +39,37 @@ def init_db():
         # 3. Seed Reports (With Marilao Coordinates)
         print("Seeding reports...")
         reports = [
-            # Lat/Lng centered around Marilao (14.7546, 120.9466)
-            Report(title="Flooding in Brgy. Poblacion", description="Water level rising.", status="Critical", location="Sector A", latitude=14.7546, longitude=120.9466),
-            Report(title="Fire Incident", description="Residential fire.", status="Active", location="Sector C", latitude=14.7600, longitude=120.9500),
-            Report(title="Road Blockage", description="Fallen tree.", status="Cleared", location="Sector B", latitude=14.7480, longitude=120.9400),
+            Report(
+                title="Flooding in Brgy. Poblacion", 
+                description="Water level rising.", 
+                status="Critical", 
+                location="Sector A", 
+                latitude=14.7546, 
+                longitude=120.9466,
+                damage_level="Major" # <--- ADDED
+            ),
+            Report(
+                title="Fire Incident", 
+                description="Residential fire.", 
+                status="Active", 
+                location="Sector C", 
+                latitude=14.7600, 
+                longitude=120.9500,
+                damage_level="Destroyed" # <--- ADDED
+            ),
+            Report(
+                title="Road Blockage", 
+                description="Fallen tree.", 
+                status="Cleared", 
+                location="Sector B", 
+                latitude=14.7480, 
+                longitude=120.9400,
+                damage_level="Minor" # <--- ADDED
+            ),
         ]
         session.add_all(reports)
 
+        
         teams = [
             Team(name="Alpha Squad", specialization="Search & Rescue", status="Deployed", personnel_count=5),
             Team(name="Medic Team Bravo", specialization="Medical", status="Idle", personnel_count=3),
