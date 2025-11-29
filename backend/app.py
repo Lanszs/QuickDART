@@ -1,3 +1,6 @@
+import sys
+sys.stdout.reconfigure(encoding='utf-8')  # Fix encoding
+sys.stdout.flush()  # Force immediate output
 from flask import Flask, jsonify , request
 from flask_cors import CORS # 1. Import CORS
 from flask_socketio import SocketIO, emit
@@ -243,25 +246,67 @@ def get_address_from_coords(lat, lng):
 
 @app.route('/api/v1/reports/<int:report_id>', methods=['PUT'])
 def update_report(report_id):
+     
+    print(f"\n{'='*50}", flush=True)
+    print(f" UPDATE REQUEST for Report ID: {report_id}", flush=True)
+
     session = SessionLocal()
     try:
         report = session.query(Report).filter(Report.id == report_id).first()
         if not report:
+            print(f" Report #{report_id} not found in database", flush=True)
             return jsonify({"error": "Report not found"}), 404
         
+        print(f"✅ Found report: {report.title}", flush=True)
+        
         data = request.get_json()
+        print(f"📦 Received data: {data}", flush=True)
+
+        if not data:
+            print("No data received in request body", flush=True)
+            return jsonify({"error": "No data provided"}), 400
+        
+        # 3. Store old values for logging
+        old_status = report.status
+        old_damage = report.damage_level
         
         # Update fields if provided
         if 'status' in data:
             report.status = data['status']
+
+            print(f"   Status: {old_status} → {report.status}", flush=True)
+
         if 'damage_level' in data:
             report.damage_level = data['damage_level']
+
+            print(f"   Damage: {old_damage} → {report.damage_level}", flush=True)
+
             
         session.commit()
-        return jsonify(report.to_dict()), 200
+        session.refresh(report)
+        print(" Database updated successfully", flush=True)
+
+        updated_data = report.to_dict()
+
+        print(f" Sending response: {updated_data}", flush=True)
+        print(f" Broadcasting update via Socket.IO...", flush=True)
+
+        socketio.emit('report_updated', updated_data)
+
+        print(f" Broadcast complete", flush=True)
+        print(f"{'='*50}\n", flush=True)
+
+        return jsonify(updated_data), 200
         
     except Exception as e:
         session.rollback()
+
+        print(f" ERROR during update: {str(e)}", flush=True)
+        print(f" Error type: {type(e).__name__}", flush=True)
+        import traceback
+        traceback.print_exc()
+        print(f"{'='*50}\n", flush=True)
+
         return jsonify({"error": str(e)}), 500
     finally:
         session.close()

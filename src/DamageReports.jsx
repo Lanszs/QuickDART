@@ -53,6 +53,8 @@ const DamageReports = ({ initialHighlightId }) => {
 
     // Save Changes
     const handleSave = async (id) => {
+        console.log("🔧 Attempting to save report #", id);
+        console.log("📦 Data being sent:", editForm);
         try {
             const response = await fetch(`http://127.0.0.1:5000/api/v1/reports/${id}`, {
                 method: 'PUT',
@@ -60,14 +62,23 @@ const DamageReports = ({ initialHighlightId }) => {
                 body: JSON.stringify(editForm)
             });
 
+            console.log("📡 Response status:", response.status);
+
             if (response.ok) {
+
+                const updatedReport = await response.json();
+                console.log("✅ Update successful:", updatedReport);
+
                 setEditingId(null);
                 fetchReports(); 
             } else {
-                alert("Failed to update report");
+                const errorData = await response.json();
+                console.error("❌ Backend error:", errorData);
+                 alert(`Failed to update report: ${errorData.error || 'Unknown error'}`);
             }
         } catch (error) {
-            console.error("Error updating:", error);
+            console.error("❌ Network error updating:", error);
+            alert(`Network error: ${error.message}`);
         }
     };
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import IncidentMap from './IncidentMap';
 import AssetsTeams from './AssetsTeams';
 import { Map as MapIcon, FileUp, LogOut, Activity, Users, FileText, Settings, RefreshCw, AlertTriangle, Clock, ChevronDown, ChevronUp, BarChart2 } from 'lucide-react';
@@ -12,21 +12,15 @@ import Statistics from './Statistics'; // <--- NEW IMPORT
 const Dashboard = ({ userRole, onLogout }) => {
     // State for Active Tab (Default to 'incidents')
     const [activeTab, setActiveTab] = useState('incidents');
-    
     const [uploadedFile, setUploadedFile] = useState(null);
-    
     const [expandedReportId, setExpandedReportId] = useState(null);
-
-    // State for Reports
     const [reports, setReports] = useState([]);
     const [isLoadingReports, setIsLoadingReports] = useState(true);
-
     const [time, setTime] = useState(new Date());
-
     const [analysisResult, setAnalysisResult] = useState(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
-
     const [reportToValidate, setReportToValidate] = useState(null);
+    const socketRef = useRef(null);
 
     const saveReport = async () => {
         if (!analysisResult) return;
@@ -67,10 +61,6 @@ const Dashboard = ({ userRole, onLogout }) => {
             const response = await fetch('http://127.0.0.1:5000/api/v1/reports');
             if (response.ok) {
                 const data = await response.json();
-
-                console.log("--- DEBUG: FETCHED REPORTS ---"); // <--- LOG 4
-                console.log("First report sample:", data[0]);
-
                 setReports(data);
             }
         } catch (error) {
@@ -86,6 +76,7 @@ const Dashboard = ({ userRole, onLogout }) => {
 
         // Connect to Backend Socket
         const socket = io('http://127.0.0.1:5000');
+        socketRef.current = socket;
 
         socket.on('connect', () => {
             console.log("✅ Connected to WebSocket Server");
@@ -96,7 +87,13 @@ const Dashboard = ({ userRole, onLogout }) => {
             console.log("⚡ LIVE UPDATE RECEIVED:", newReport);
             
             // Add the new report to the TOP of the list instantly
-            setReports((prevReports) => [newReport, ...prevReports]);
+            setReports((prevReports) => {
+                // Check if report already exists to avoid duplicates
+                if (prevReports.some(r => r.id === newReport.id)) {
+                    return prevReports;
+                }
+                return [newReport, ...prevReports];
+            });
             
             // Optional: Play a sound or show a toast notification here
             toast.error(
@@ -117,6 +114,29 @@ const Dashboard = ({ userRole, onLogout }) => {
             );
         });
 
+        socket.on('report_updated', (updatedReport) => {
+        console.log("📝 REPORT UPDATED:", updatedReport);
+        
+        setReports((prevReports) => 
+            prevReports.map(report => 
+                report.id === updatedReport.id ? updatedReport : report
+            )
+        );
+        
+        toast.info(
+            <div>
+                <strong>Report Updated</strong>
+                <div className="text-xs mt-1">{updatedReport.title}</div>
+                <div className="text-xs text-gray-200">Status: {updatedReport.status} | Damage: {updatedReport.damage_level}</div>
+            </div>,
+            {
+                position: "top-right",
+                autoClose: 5000,
+                theme: "light",
+            }
+        );
+        });
+
         // Clock Timer
         const clockInterval = setInterval(() => {
             setTime(new Date());
@@ -128,6 +148,14 @@ const Dashboard = ({ userRole, onLogout }) => {
             clearInterval(clockInterval);
         };
     }, []);
+
+    // Add this useEffect to watch for tab changes
+    useEffect(() => {
+    if (activeTab === 'incidents') {
+        fetchReports(); // Refresh when switching to incidents tab
+    }
+    }, [activeTab]) 
+    
 
   const handleFileChange = async (event) => {
         const file = event.target.files[0];
