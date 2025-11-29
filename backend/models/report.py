@@ -15,7 +15,8 @@ class Report(Base):
     longitude = Column(Float, nullable=True)
 
     damage_level = Column(String, default="Pending")
-
+    image_url = Column(String, nullable=True)
+    
     def to_dict(self):
         """Helper to convert object to JSON-ready dictionary"""
         return {
@@ -27,5 +28,6 @@ class Report(Base):
             "location": self.location,
             "lat": self.latitude, 
             "lng": self.longitude,
-            "damage_level": self.damage_level
+            "damage_level": self.damage_level,
+            "image_url": self.image_url
         }

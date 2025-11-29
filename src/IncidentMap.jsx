@@ -28,13 +28,21 @@ const MapFix = () => {
     return null;
 };
 
-const MARILAO_BOUNDS = [
-    [14.7200, 120.9000], // South-West corner
-    [14.8200, 121.0500]  // North-East corner
+const MAP_BOUNDS = [
+    [14.6000, 120.8500], // South-West corner (Manila Bay / Navotas area)
+    [14.8000, 121.0500]  // North-East corner (Quezon City / Meycauayan border)
 ];
 
+/* const MARILAO_BOUNDS = [
+    [14.7200, 120.9000], // South-West corner
+    [14.8200, 121.0500]  // North-East corner
+]; */
+
 // Coordinates for Marilao, Bulacan
-const MARILAO_CENTER = [14.7546, 120.9466];
+// const MARILAO_CENTER = [14.7546, 120.9466];
+
+// --- UPDATED CENTER: DAMPALIT, MALABON ---
+const MAP_CENTER = [14.6944, 120.9324];
 
 // Mock Incident Data
 const incidents = [
@@ -47,14 +55,14 @@ const incidents = [
 const IncidentMap = ({ reports = [] }) => {
     return (
         <MapContainer 
-            center={MARILAO_CENTER} 
+            center={MAP_CENTER} 
             zoom={14} 
             minZoom={13} // Prevent zooming out too far (seeing the whole world)
             maxZoom={18} // Prevent zooming in too close
-            maxBounds={MARILAO_BOUNDS} // Lock view to Marilao
+            maxBounds={MAP_BOUNDS} // Lock view to Marilao
             maxBoundsViscosity={1.0} // How "sticky" the bounds are (1.0 = hard stop)
             scrollWheelZoom={true} 
-            style={{ height: "700px", width: "100%", borderRadius: "0.5rem", zIndex: 0 }} // Explicit style helps prevent size issues
+            style={{ height: "100%", width: "100%", borderRadius: "0.5rem", zIndex: 0 }} // Explicit style helps prevent size issues
         >
 
             <MapFix />

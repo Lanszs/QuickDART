@@ -1,90 +1,137 @@
 import React, { useState, useEffect } from 'react';
-import { UploadCloud, MapPin, AlertTriangle, CheckCircle, ArrowLeft, Activity, Send, Camera, Info, Clock } from 'lucide-react';
+import { Camera, MapPin, AlertTriangle, Send, FileText, XCircle, CheckCircle, Loader2 } from 'lucide-react';
 
-const GuestDashboard = ({ onBack }) => {
+const GuestDashboard = () => {
+    const [step, setStep] = useState(1); // 1=Upload, 2=Details, 3=Success
     const [uploading, setUploading] = useState(false);
-    const [aiResult, setAiResult] = useState(null);
-    const [submissionStatus, setSubmissionStatus] = useState(null); // 'success' | 'error' | null
-    const [time, setTime] = useState(new Date());
+    const [submitting, setSubmitting] = useState(false);
+    const [locating, setLocating] = useState(false);
+    
+    // Data State
+    const [selectedFile, setSelectedFile] = useState(null);
+    const [previewUrl, setPreviewUrl] = useState(null);
+    const [analysisResult, setAnalysisResult] = useState(null);
+    
+    // Form State
+    const [formData, setFormData] = useState({
+        location: '', 
+        description: '',
+        latitude: null,
+        longitude: null
+    });
 
+    // --- AUTOMATIC LOCATION TRIGGER ---
     useEffect(() => {
-        const timer = setInterval(() => {
-            setTime(new Date());
-        }, 1000);
-        return () => clearInterval(timer);
-    }, []);
+        if (step === 2) {
+            triggerLocation();
+        }
+    }, [step]);
 
-    // --- 1. AI IMAGE ANALYSIS ---
-    const handleImageUpload = async (event) => {
+    const triggerLocation = () => {
+        if (!navigator.geolocation) {
+            console.error("Geolocation not supported");
+            return;
+        }
+
+        setLocating(true);
+        // We leave the field blank initially as you requested
+        // setFormData(prev => ({ ...prev, location: "Asking permission..." })); 
+
+        navigator.geolocation.getCurrentPosition(
+            async (position) => {
+                console.log("📍 GPS Granted:", position);
+                const lat = position.coords.latitude;
+                const lng = position.coords.longitude;
+
+                // 1. Save Raw GPS immediately
+                setFormData(prev => ({
+                    ...prev,
+                    latitude: lat,
+                    longitude: lng
+                }));
+
+                // 2. Convert to Address (OpenStreetMap)
+                try {
+                    const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+                    const data = await response.json();
+                    
+                    if (data && data.display_name) {
+                        // Clean up the address (keep it short - first 4 parts)
+                        const address = data.display_name.split(',').slice(0, 4).join(',');
+                        setFormData(prev => ({ ...prev, location: address }));
+                    } else {
+                        setFormData(prev => ({ ...prev, location: `GPS: ${lat.toFixed(5)}, ${lng.toFixed(5)}` }));
+                    }
+                } catch (error) {
+                    setFormData(prev => ({ ...prev, location: `GPS: ${lat.toFixed(5)}, ${lng.toFixed(5)}` }));
+                } finally {
+                    setLocating(false);
+                }
+            },
+            (error) => {
+                console.warn("Location permission denied or error:", error);
+                setLocating(false);
+                // We do NOT alert here to avoid annoying the user if they blocked it on purpose
+            },
+            {
+                enableHighAccuracy: true, // Forces a "serious" location request
+                timeout: 10000,
+                maximumAge: 0
+            }
+        );
+    };
+
+    // --- 1. HANDLE IMAGE UPLOAD & ANALYZE ---
+    const handleFileSelect = async (event) => {
         const file = event.target.files[0];
         if (!file) return;
 
+        const objectUrl = URL.createObjectURL(file);
+        setPreviewUrl(objectUrl);
+        setSelectedFile(file);
         setUploading(true);
-        setAiResult(null);
-        setSubmissionStatus(null);
 
-        const formData = new FormData();
-        formData.append('file', file);
+        const uploadData = new FormData();
+        uploadData.append('file', file);
 
         try {
             const response = await fetch('http://127.0.0.1:5000/api/v1/analyze', {
                 method: 'POST',
-                body: formData,
+                body: uploadData,
             });
-            
+
             if (response.ok) {
                 const result = await response.json();
-                setAiResult(result);
+                setAnalysisResult(result);
+                setStep(2); // <--- Triggers useEffect -> triggerLocation()
             } else {
-                alert("Unable to analyze image. Please try again.");
+                const err = await response.json();
+                alert(`Analysis Failed: ${err.error || 'Server Error'}`);
+                setStep(1); 
             }
         } catch (error) {
-            console.error("AI Connection Error", error);
-            alert("Could not connect to QuickDART server.");
+            console.error("Upload error:", error);
+            alert("Network Error: Could not connect to server.");
         } finally {
             setUploading(false);
         }
     };
 
-    // --- 2. SUBMIT PUBLIC REPORT ---
-    const submitPublicReport = async () => {
-        if (!aiResult) return;
-
-        console.log("--- DEBUG: STARTING SUBMISSION ---"); // <--- LOG 1
-        console.log("AI Result being used:", aiResult);
-
-        setSubmissionStatus('submitting');
-
-        // Attempt to get location, default to Marilao if denied/unavailable
-        const getLocation = () => {
-            return new Promise((resolve) => {
-                if (navigator.geolocation) {
-                    navigator.geolocation.getCurrentPosition(
-                        (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-                        (err) => {
-                            console.warn("GPS denied:", err);
-                            resolve({ lat: 14.7546, lng: 120.9466 }); // Marilao Fallback
-                        }
-                    );
-                } else {
-                    resolve({ lat: 14.7546, lng: 120.9466 });
-                }
-            });
-        };
-
-        const loc = await getLocation();
+    // --- 3. SUBMIT REPORT ---
+    const handleSubmit = async () => {
+        if (!analysisResult) return;
+        setSubmitting(true);
 
         const newReport = {
-            title: `Public Report: ${aiResult.type}`,
-            description: `Citizen submission. Assessment: ${aiResult.damage}. AI Confidence: ${aiResult.confidence}`,
-            status: 'Active', // Admins see this as a live active report
-            location: `Public User @ ${loc.lat.toFixed(4)}, ${loc.lng.toFixed(4)}`,
-            latitude: loc.lat,
-            longitude: loc.lng,
-            damage_level: aiResult.damage
+            title: `Public Report: ${analysisResult.type}`,
+            description: formData.description || `AI Detected ${analysisResult.damage} damage.`,
+            status: 'Pending',
+            location: formData.location || 'Unknown Location',
+            latitude: formData.latitude || 14.7546, 
+            longitude: formData.longitude || 120.9466,
+            damage_level: analysisResult.damage,
+            image_url: analysisResult.image_url 
         };
-        
-        console.log("PAYLOAD being sent to backend:", newReport);
 
         try {
             const response = await fetch('http://127.0.0.1:5000/api/v1/reports', {
@@ -94,160 +141,166 @@ const GuestDashboard = ({ onBack }) => {
             });
 
             if (response.ok) {
-                setSubmissionStatus('success');
-                setAiResult(null);
+                setStep(3); 
             } else {
-                setSubmissionStatus('error');
+                alert("Failed to submit report. Please try again.");
             }
-        } catch (e) {
-            setSubmissionStatus('error');
+        } catch (error) {
+            console.error("Submission error:", error);
+            alert("Network error. Please check your connection.");
+        } finally {
+            setSubmitting(false);
         }
     };
 
+    const resetForm = () => {
+        setStep(1);
+        setSelectedFile(null);
+        setPreviewUrl(null);
+        setAnalysisResult(null);
+        setFormData({ location: '', description: '', latitude: null, longitude: null });
+    };
+
     return (
-        <div className="flex flex-col min-h-screen bg-slate-50">
-            {/* --- Public Header --- */}
-            <header className="bg-white p-4 shadow-sm flex justify-between items-center sticky top-0 z-10">
-                <div className="flex items-center gap-2">
-                    <Activity className="text-blue-600" />
-                    <span className="font-extrabold text-lg tracking-tight text-slate-800">
-                        QuickDART <span className="text-blue-600 font-medium">Public</span>
-                    </span>
+        <div className="min-h-screen bg-gray-50 flex flex-col items-center p-6">
+            
+            <div className="w-full max-w-md mb-8 text-center">
+                <div className="inline-flex items-center justify-center p-3 bg-blue-600 rounded-xl shadow-lg mb-4">
+                    <AlertTriangle className="text-white h-8 w-8" />
                 </div>
+                <h1 className="text-2xl font-bold text-gray-900">Public Incident Reporting</h1>
+                <p className="text-gray-500 text-sm mt-1">Report disasters for immediate assistance</p>
+            </div>
 
-                <div className="flex items-center gap-4">
-                    {/* Clock Display (Now beside Exit) */}
-                    <div className="hidden md:flex items-center gap-3 bg-slate-100 px-4 py-1.5 rounded-lg border border-slate-200">
-                        <Clock size={18} className="text-blue-600" />
-                        <div className="flex flex-col leading-tight text-right">
-                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                                {time.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
-                            </span>
-                            <span className="text-sm font-bold font-mono text-slate-800">
-                                {time.toLocaleTimeString()}
-                            </span>
-                        </div>
-                    </div>
-
-
-                    <button 
-                    onClick={onBack} 
-                    className="flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors"
-                     >
-                    <ArrowLeft size={16} /> Exit
-                    </button>
-                </div>
-            </header>
-
-            <main className="flex-grow flex flex-col items-center p-6 max-w-xl mx-auto w-full">
+            <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden">
                 
-                {/* --- Intro Section --- */}
-                {!aiResult && !submissionStatus && (
-                    <div className="text-center mb-8 mt-4">
-                        <h2 className="text-2xl font-bold text-slate-800 mb-2">Report a Disaster</h2>
-                        <p className="text-slate-500 text-sm">
-                            Upload a photo of the incident. Our AI will analyze it and alert nearby response teams immediately.
-                        </p>
+                {/* --- STEP 1: UPLOAD --- */}
+                {step === 1 && (
+                    <div className="p-8">
+                        <div className="border-2 border-dashed border-blue-200 rounded-2xl bg-blue-50/50 hover:bg-blue-50 transition-colors h-64 flex flex-col items-center justify-center relative group cursor-pointer">
+                            <input 
+                                type="file" 
+                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                accept="image/*"
+                                onChange={handleFileSelect}
+                                disabled={uploading}
+                            />
+                            {uploading ? (
+                                <div className="text-center">
+                                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mx-auto mb-3"></div>
+                                    <p className="text-blue-600 font-bold">Analyzing...</p>
+                                </div>
+                            ) : (
+                                <div className="text-center">
+                                    <div className="bg-white p-4 rounded-full shadow-sm mb-3 inline-block group-hover:scale-110 transition-transform">
+                                        <Camera className="h-8 w-8 text-blue-600" />
+                                    </div>
+                                    <p className="font-bold text-gray-700">Tap to Take Photo</p>
+                                    <p className="text-xs text-gray-400 mt-1">or upload from gallery</p>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 )}
 
-                {/* --- SUCCESS STATE --- */}
-                {submissionStatus === 'success' && (
-                    <div className="bg-green-50 border border-green-200 rounded-2xl p-8 text-center w-full animate-in zoom-in duration-300">
-                        <div className="bg-green-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <CheckCircle className="text-green-600" size={32} />
+                {/* --- STEP 2: DETAILS --- */}
+                {step === 2 && analysisResult && (
+                    <div className="p-0">
+                        {/* Image Preview */}
+                        <div className="relative h-48 bg-gray-900">
+                            <img src={previewUrl} alt="Preview" className="w-full h-full object-cover opacity-80" />
+                            <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent text-white">
+                                <div className="flex items-center gap-2">
+                                    <span className="bg-red-500 px-2 py-0.5 rounded text-xs font-bold uppercase">{analysisResult.type}</span>
+                                    <span className="text-xs opacity-90">Confidence: {analysisResult.confidence}</span>
+                                </div>
+                                <p className="font-bold text-lg">{analysisResult.damage} Damage Detected</p>
+                            </div>
+                            <button onClick={resetForm} className="absolute top-4 right-4 bg-black/50 p-1 rounded-full text-white hover:bg-red-600 transition-colors">
+                                <XCircle size={20} />
+                            </button>
                         </div>
-                        <h3 className="text-xl font-bold text-green-800 mb-2">Report Submitted</h3>
-                        <p className="text-green-600 mb-6 text-sm">
-                            Thank you. Emergency responders have been notified of your location.
-                        </p>
+
+                        {/* Form Fields */}
+                        <div className="p-6 space-y-4">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Location</label>
+                                <div className="flex gap-2">
+                                    <div className="flex-1 flex items-center gap-2 border rounded-lg p-3 bg-gray-50 focus-within:bg-white focus-within:ring-2 ring-blue-100 transition-all">
+                                        {/* MAKE ICON CLICKABLE TO FORCE RETRY */}
+                                        <button onClick={triggerLocation} title="Retrigger Location">
+                                            {locating ? (
+                                                <Loader2 className="animate-spin text-blue-500" size={18} />
+                                            ) : (
+                                                <MapPin className="text-gray-400 hover:text-blue-500 cursor-pointer" size={18} />
+                                            )}
+                                        </button>
+                                        
+                                        <input 
+                                            type="text" 
+                                            placeholder={locating ? "Asking permission..." : "Location name..."}
+                                            className="bg-transparent outline-none w-full text-sm font-medium"
+                                            value={formData.location}
+                                            onChange={(e) => setFormData({...formData, location: e.target.value})}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Description (Optional)</label>
+                                <div className="flex items-start gap-2 border rounded-lg p-3 bg-gray-50 focus-within:bg-white focus-within:ring-2 ring-blue-100 transition-all">
+                                    <FileText className="text-gray-400 mt-0.5" size={18} />
+                                    <textarea 
+                                        placeholder="Describe the situation..." 
+                                        className="bg-transparent outline-none w-full text-sm font-medium resize-none"
+                                        rows="2"
+                                        value={formData.description}
+                                        onChange={(e) => setFormData({...formData, description: e.target.value})}
+                                    />
+                                </div>
+                            </div>
+
+                            <button 
+                                onClick={handleSubmit}
+                                disabled={submitting}
+                                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-all mt-2 shadow-lg shadow-blue-200"
+                            >
+                                {submitting ? (
+                                    <span>Sending...</span>
+                                ) : (
+                                    <>
+                                        <Send size={18} /> Submit Report
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* --- STEP 3: SUCCESS --- */}
+                {step === 3 && (
+                    <div className="p-10 text-center flex flex-col items-center justify-center">
+                        <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-6 animate-bounce">
+                            <CheckCircle className="h-10 w-10 text-green-600" />
+                        </div>
+                        <h2 className="text-2xl font-bold text-gray-800 mb-2">Report Submitted!</h2>
+                        <p className="text-gray-500 mb-8">Thank you. Responders have been notified.</p>
+                        
                         <button 
-                            onClick={() => setSubmissionStatus(null)}
-                            className="bg-green-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-green-700 transition-colors w-full"
+                            onClick={resetForm}
+                            className="w-full py-3 bg-gray-900 text-white rounded-xl font-bold hover:bg-gray-800 transition-colors"
                         >
-                            Submit Another Report
+                            Report Another Incident
                         </button>
                     </div>
                 )}
 
-                {/* --- UPLOAD CARD --- */}
-                {!aiResult && !submissionStatus && (
-                    <label className="w-full aspect-[4/3] bg-white border-2 border-dashed border-slate-300 rounded-3xl flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-50/50 transition-all group shadow-sm">
-                        {uploading ? (
-                            <div className="text-center">
-                                <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-200 border-t-blue-600 mx-auto mb-4"></div>
-                                <p className="font-bold text-slate-700">Analyzing Scene...</p>
-                                <p className="text-xs text-slate-400">Please wait</p>
-                            </div>
-                        ) : (
-                            <>
-                                <div className="bg-blue-100 p-5 rounded-full mb-4 group-hover:scale-110 transition-transform">
-                                    <Camera className="w-10 h-10 text-blue-600" />
-                                </div>
-                                <p className="font-bold text-slate-700 text-lg">Tap to Upload Photo</p>
-                                <p className="text-sm text-slate-400 mt-1">Use Camera or Gallery</p>
-                            </>
-                        )}
-                        <input 
-                            type="file" 
-                            className="hidden" 
-                            accept="image/*" 
-                            onChange={handleImageUpload} 
-                            disabled={uploading} 
-                        />
-                    </label>
-                )}
-
-                {/* --- RESULT PREVIEW CARD --- */}
-                {aiResult && !submissionStatus && (
-                    <div className="w-full bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-100 animate-in slide-in-from-bottom-4">
-                        {/* Header */}
-                        <div className="bg-slate-900 p-6 text-white">
-                            <div className="flex items-center gap-2 mb-1">
-                                <AlertTriangle className="text-yellow-400" />
-                                <span className="text-xs font-bold uppercase tracking-wider text-yellow-400">AI Detection</span>
-                            </div>
-                            <h3 className="text-3xl font-bold">{aiResult.type}</h3>
-                            <p className="text-slate-400 text-sm mt-1">Confidence: {aiResult.confidence}</p>
-                        </div>
-
-                        {/* Body */}
-                        <div className="p-6">
-                            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 mb-6">
-                                <p className="text-xs font-bold text-slate-400 uppercase mb-1">Damage Assessment</p>
-                                <p className="text-lg font-medium text-slate-800">{aiResult.damage}</p>
-                            </div>
-
-                            <div className="flex flex-col gap-3">
-                                <button 
-                                    onClick={submitPublicReport}
-                                    className="w-full py-4 bg-red-600 text-white rounded-xl font-bold text-lg shadow-lg shadow-red-200 hover:bg-red-700 flex items-center justify-center gap-2 transition-transform active:scale-95"
-                                >
-                                    <Send size={20} /> Send Emergency Alert
-                                </button>
-                                <button 
-                                    onClick={() => setAiResult(null)}
-                                    className="w-full py-3 bg-white text-slate-500 font-bold rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors"
-                                >
-                                    Cancel
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* --- Footer info --- */}
-                {!aiResult && !submissionStatus && (
-                    <div className="mt-8 flex items-start gap-3 p-4 bg-blue-50 rounded-xl text-sm text-blue-800">
-                        <Info className="shrink-0 mt-0.5" size={18} />
-                        <p>
-                            Your report will be geo-tagged and sent to the QuickDART Command Center. 
-                            False reporting is punishable by law.
-                        </p>
-                    </div>
-                )}
-
-            </main>
+            </div>
+            
+            <div className="mt-8 text-xs text-gray-400">
+                QuickDART System &copy; 2025
+            </div>
         </div>
     );
 };

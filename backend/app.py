@@ -1,8 +1,8 @@
 import sys
 import os
+import uuid 
 
 # --- 🔧 FIX: FORCE PYTHON TO FIND THE 'MODELS' FOLDER ---
-# This MUST happen BEFORE you import 'from models...'
 # This tells Python: "The current folder (backend) is part of the path!"
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
@@ -11,8 +11,8 @@ sys.path.append(current_dir)
 sys.stdout.reconfigure(encoding='utf-8')  # Fix encoding
 sys.stdout.flush()  # Force immediate output
 
-from flask import Flask, jsonify , request
-from flask_cors import CORS # 1. Import CORS
+from flask import Flask, jsonify , request, send_from_directory
+from flask_cors import CORS 
 from flask_socketio import SocketIO, emit
 
 # --- NOW these imports will work because the path is fixed ---
@@ -29,12 +29,9 @@ from PIL import Image
 from datetime import datetime
 import requests
 
-app = Flask(__name__)
-
-# --- CRITICAL CHANGE: Explicitly define the origin ---
-# This forces the backend to recognize and accept requests ONLY from the
-# React development server running at port 3000.
-CORS(app, resources={r"/api/*": {"origins": "http://localhost:3000"}})
+# Set up Static Folder for Images
+app = Flask(__name__, static_folder='static') 
+CORS(app, resources={r"/*": {"origins": "*"}}) # Allow all origins to fix image loading issues
 
 socketio = SocketIO(app, cors_allowed_origins="*")
 
@@ -74,6 +71,11 @@ transform = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
+
+# --- NEW: Serve Images Route ---
+@app.route('/static/uploads/<path:filename>')
+def serve_image(filename):
+    return send_from_directory(os.path.join(app.root_path, 'static/uploads'), filename)
 
 # --- RESOURCES ROUTES ---
 @app.route('/api/v1/resources', methods=['GET'])
@@ -117,12 +119,20 @@ def login_user():
     role = authenticate_user(user_id, password)
 
     if role:
+        # Get Team ID
+        session = SessionLocal()
+        from models.user import User
+        user_obj = session.query(User).filter(User.agency_id == user_id).first()
+        team_id = user_obj.team_id if user_obj else None
+        session.close()
+
         # 3. Success! Return the role and a token
         return jsonify({
             "status": "authenticated",
             "token": "mock_jwt_token_123", # In the future, we can make this a real JWT
             "role": role,
-            "user_id": user_id
+            "user_id": user_id,
+            "team_id": team_id
         }), 200
     else:
         # 4. Failure
@@ -132,7 +142,7 @@ def login_user():
 # --- TEAM MANAGEMENT ROUTES ---
 @app.route('/api/v1/teams/<int:team_id>/deploy', methods=['PUT'])
 def deploy_team(team_id):
-    """Deploy or recall a team"""
+    """Deploy or recall a team with a specific task"""
     print(f"\n{'='*50}")
     print(f"🔧 DEPLOY TEAM REQUEST - ID: {team_id}")
     
@@ -149,14 +159,24 @@ def deploy_team(team_id):
         print(f"📦 Received data: {data}")
         
         new_status = data.get('status')
-        print(f"📝 New status: {new_status}")
+        new_task = data.get('task', '') # <--- NEW: Extract the task message
         
+        print(f"📝 New status: {new_status}")
+        print(f"📋 Task Orders: {new_task}")
+
         if new_status not in ['Deployed', 'Idle', 'Resting']:
             print(f"❌ Invalid status: {new_status}")
             return jsonify({"error": "Invalid status"}), 400
         
         old_status = team.status
         team.status = new_status
+        
+        # --- NEW LOGIC: Update the Task ---
+        if new_status == 'Deployed':
+            team.current_task = new_task  # Save the orders
+        else:
+            team.current_task = None      # Clear orders if recalled/resting
+        # ----------------------------------
         
         session.commit()
         session.refresh(team)
@@ -343,7 +363,7 @@ def notify_asset(asset_id):
         session.close()
 
 
-# --- AI ANALYSIS ROUTE ---
+# --- AI ANALYSIS ROUTE (UPDATED TO SAVE IMAGE) ---
 @app.route('/api/v1/analyze', methods=['POST'])
 def analyze_image():
     if 'file' not in request.files:
@@ -353,36 +373,53 @@ def analyze_image():
     if file.filename == '':
         return jsonify({"error": "No selected file"}), 400
 
-    if not type_model or not damage_model:
-        return jsonify({"error": "Models not loaded on server"}), 500
-
     try:
-        # 1. Process Image
-        image_bytes = file.read()
+        # 1. SAVE THE IMAGE TO DISK
+        filename = f"{uuid.uuid4().hex}_{file.filename}"
+        upload_folder = os.path.join(app.root_path, 'static', 'uploads')
+
+        if not os.path.exists(upload_folder):
+            os.makedirs(upload_folder)
+
+        filepath = os.path.join(upload_folder, filename)
+        
+        # Reset file pointer before saving, then reset again for AI
+        file.save(filepath) 
+        
+        # 2. Process for AI
+        with open(filepath, 'rb') as f:
+            image_bytes = f.read()
+            
         image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
         tensor = transform(image).unsqueeze(0) 
         
-        # 2. Predict Disaster TYPE
-        with torch.no_grad():
-            type_outputs = type_model(tensor)
-            _, type_preds = torch.max(type_outputs, 1)
-            type_probs = torch.nn.functional.softmax(type_outputs, dim=1)
-            type_conf = type_probs[0][type_preds].item() * 100
-            
-        detected_type = TYPE_CLASS_NAMES[type_preds.item()]
+        # 3. Predict 
+        if type_model and damage_model:
+            with torch.no_grad():
+                type_outputs = type_model(tensor)
+                _, type_preds = torch.max(type_outputs, 1)
+                type_probs = torch.nn.functional.softmax(type_outputs, dim=1)
+                type_conf = type_probs[0][type_preds].item() * 100
+            detected_type = TYPE_CLASS_NAMES[type_preds.item()]
 
-        # 3. Predict Damage LEVEL
-        with torch.no_grad():
-            damage_outputs = damage_model(tensor)
-            _, damage_preds = torch.max(damage_outputs, 1)
-            # We don't need confidence for this one as much, just the label
-            
-        detected_damage = DAMAGE_CLASS_NAMES[damage_preds.item()]
+            with torch.no_grad():
+                damage_outputs = damage_model(tensor)
+                _, damage_preds = torch.max(damage_outputs, 1)
+            detected_damage = DAMAGE_CLASS_NAMES[damage_preds.item()]
+        else:
+            detected_type = "Unknown"
+            detected_damage = "Unknown"
+            type_conf = 0.0
+
+        # 4. RETURN URL WITH RESULT
+        # IMPORTANT: Use your actual IP or localhost if running locally
+        image_url = f"http://127.0.0.1:5000/static/uploads/{filename}"
         
         return jsonify({
             "type": detected_type,
             "confidence": f"{type_conf:.2f}%",
-            "damage": detected_damage # Now returns real data!
+            "damage": detected_damage,
+            "image_url": image_url # <--- Sends the link to the saved image
         })
 
     except Exception as e:
@@ -390,7 +427,7 @@ def analyze_image():
         return jsonify({"error": str(e)}), 500
 
 
-# --- REPORTS ROUTES ---
+# --- REPORTS ROUTES (UPDATED TO SAVE IMAGE URL) ---
 @app.route('/api/v1/reports', methods=['GET', 'POST'])
 def handle_reports():
     session = SessionLocal()
@@ -409,34 +446,26 @@ def handle_reports():
         try:
             data = request.get_json()
             
-            print(f"--- DEBUG: BACKEND RECEIVED DATA ---") # <--- PRINT 1
-            print(f"Full Data Packet: {data}")             # <--- PRINT 2
-            print(f"Looking for 'damage_level': {data.get('damage_level')}")
-
             # 1. Extract Coords
             lat = data.get('latitude')
             lng = data.get('longitude')
             
             # 2. Determine Location Name (Backend Side)
-            # If frontend sent a generic name, we try to find the real address
             location_name = data.get('location', 'Unknown')
             if lat and lng:
-                # Convert Coords -> Address Name automatically
                 location_name = get_address_from_coords(lat, lng)
 
-            print(f"DEBUG: Incoming Data -> {data}") 
-            print(f"DEBUG: Extracted Damage -> {data.get('damage_level')}")
-
-            # 3. Save Report
+            # 3. Save Report with Image URL
             new_report = Report(
                 title=data.get('title'),
                 description=data.get('description'),
                 status=data.get('status', 'Active'),
-                location=location_name, # <--- Saves the Real Address Name!
+                location=location_name,
                 latitude=lat,
                 longitude=lng,
                 timestamp=datetime.utcnow(),
-                damage_level=data.get('damage_level', 'Pending')
+                damage_level=data.get('damage_level', 'Pending'),
+                image_url=data.get('image_url') # <--- Saving the URL!
             )
             session.add(new_report)
             session.commit()
@@ -499,12 +528,10 @@ def update_report(report_id):
         # Update fields if provided
         if 'status' in data:
             report.status = data['status']
-
             print(f"   Status: {old_status} → {report.status}", flush=True)
 
         if 'damage_level' in data:
             report.damage_level = data['damage_level']
-
             print(f"   Damage: {old_damage} → {report.damage_level}", flush=True)
 
             
@@ -536,6 +563,125 @@ def update_report(report_id):
         return jsonify({"error": str(e)}), 500
     finally:
         session.close()
+
+# --- CHAT / COMMUNICATION EVENTS ---
+
+@socketio.on('join_room')
+def handle_join(data):
+    # Teams join a room based on their ID (e.g., "team_1")
+    # Admin joins "admin_room"
+    room = data.get('room')
+    from flask_socketio import join_room
+    join_room(room)
+    print(f"📡 Client joined room: {room}")
+
+@socketio.on('send_message')
+def handle_message(data):
+    """
+    data = {
+        'sender': 'Admin' or 'Flood Unit',
+        'target_room': 'team_1' or 'admin_room',
+        'message': 'Go to Sector C'
+    }
+    """
+    print(f"💬 Message: {data}")
+    target = data.get('target_room')
+    
+    # Broadcast the message to the specific room
+    emit('receive_message', data, room=target)
+    
+    # If Admin sent it, also bounce it back to Admin so it shows on their screen
+    # (In a real app, you'd save to DB here)
+    if data.get('target_room') != 'admin_room':
+        emit('receive_message', data, room='admin_room')
+
+# --- CRUD: ADD & REMOVE RESOURCES ---
+
+@app.route('/api/v1/teams', methods=['POST'])
+def create_team():
+    """Create a new Team"""
+    session = SessionLocal()
+    try:
+        data = request.get_json()
+        new_team = Team(
+            name=data['name'],
+            specialization=data['specialization'],
+            personnel_count=int(data['personnel_count']),
+            status='Idle' # Default status
+        )
+        session.add(new_team)
+        session.commit()
+        
+        # Broadcast update
+        socketio.emit('resource_updated', {'type': 'team', 'action': 'created'})
+        return jsonify({"message": "Team created successfully"}), 201
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+@app.route('/api/v1/teams/<int:team_id>', methods=['DELETE'])
+def delete_team(team_id):
+    """Delete a Team"""
+    session = SessionLocal()
+    try:
+        team = session.query(Team).filter(Team.id == team_id).first()
+        if not team:
+            return jsonify({"error": "Team not found"}), 404
+        
+        session.delete(team)
+        session.commit()
+        
+        socketio.emit('resource_updated', {'type': 'team', 'action': 'deleted'})
+        return jsonify({"message": "Team deleted"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+@app.route('/api/v1/assets', methods=['POST'])
+def create_asset():
+    """Create a new Asset"""
+    session = SessionLocal()
+    try:
+        data = request.get_json()
+        new_asset = Asset(
+            name=data['name'],
+            type=data['type'], # e.g., "Vehicle", "Drone"
+            location=data['location'],
+            status='Available' # Default status
+        )
+        session.add(new_asset)
+        session.commit()
+        
+        socketio.emit('resource_updated', {'type': 'asset', 'action': 'created'})
+        return jsonify({"message": "Asset created successfully"}), 201
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+@app.route('/api/v1/assets/<int:asset_id>', methods=['DELETE'])
+def delete_asset(asset_id):
+    """Delete an Asset"""
+    session = SessionLocal()
+    try:
+        asset = session.query(Asset).filter(Asset.id == asset_id).first()
+        if not asset:
+            return jsonify({"error": "Asset not found"}), 404
+        
+        session.delete(asset)
+        session.commit()
+        
+        socketio.emit('resource_updated', {'type': 'asset', 'action': 'deleted'})
+        return jsonify({"message": "Asset deleted"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+        
 
 if __name__ == '__main__':
     print("INFO:root:Starting Flask API server on port 5000...")
