@@ -3,8 +3,39 @@ import Dashboard from './Dashboard';
 import ResponderDashboard from './ResponderDashboard';
 import GuestDashboard from './GuestDashboard';
 import { Shield, User, Map as MapIcon, ArrowRight } from 'lucide-react';
+import { supabase } from './supabaseClient';
 
-// --- 2. Welcome Modal Component ---
+// --- UI COMPONENTS ---
+
+const Header = ({ onBack }) => (
+  <header className="bg-blue-800 text-white shadow-lg w-full">
+    <div className="container mx-auto p-4 flex justify-between items-center">
+       <button onClick={onBack} className="text-blue-200 hover:text-white text-sm">← Back</button>
+       <div className="text-center">
+         <h1 className="text-xl md:text-2xl font-extrabold tracking-tight">Disaster Rapid Response</h1>
+         <p className="text-sm opacity-80">Authorized Access Only</p>
+       </div>
+       <div className="w-10"></div>
+    </div>
+  </header>
+);
+
+const Footer = () => (
+  <footer className="bg-gray-800 text-white text-center p-3 text-xs w-full mt-auto">
+    &copy; 2025 Group 3 Embile_Samaniego_Ang. All Rights Reserved.
+  </footer>
+);
+
+const LoadingScreen = () => (
+    <div className="flex items-center justify-center min-h-screen bg-gray-50">
+        <div className="text-gray-600 flex items-center animate-pulse">
+            Loading Application...
+        </div>
+    </div>
+);
+
+// --- SCREEN COMPONENTS ---
+
 const WelcomeScreen = ({ onSelectMode }) => (
   <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-slate-900 to-blue-900 p-4">
     <div className="text-center mb-12 animate-in fade-in slide-in-from-bottom-4 duration-700">
@@ -17,7 +48,6 @@ const WelcomeScreen = ({ onSelectMode }) => (
     </div>
 
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-4xl">
-      {/* Admin / Responder Option */}
       <button 
         onClick={() => onSelectMode('admin')}
         className="group relative flex flex-col items-center p-8 bg-white/10 backdrop-blur-md border border-white/10 rounded-3xl hover:bg-white/20 transition-all duration-300 hover:scale-105 text-left"
@@ -34,7 +64,6 @@ const WelcomeScreen = ({ onSelectMode }) => (
         </div>
       </button>
 
-      {/* Guest Option */}
       <button 
         onClick={() => onSelectMode('guest')}
         className="group relative flex flex-col items-center p-8 bg-white/5 backdrop-blur-sm border border-white/5 rounded-3xl hover:bg-white/10 transition-all duration-300 hover:scale-105 text-left"
@@ -56,105 +85,8 @@ const WelcomeScreen = ({ onSelectMode }) => (
   </div>
 );
 
-// --- 3. Main App Component ---
-const App = () => {
-  // 'welcome' | 'admin' | 'guest'
-  const [appMode, setAppMode] = useState('welcome'); 
-  
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [token, setToken] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [role, setRole] = useState(null);
-
-  useEffect(() => {
-    setTimeout(() => {
-      setIsLoading(false);
-    }, 500);
-  }, []);
-
-  const handleLoginSuccess = useCallback((receivedToken, receivedRole) => {
-    setToken(receivedToken);
-    setRole(receivedRole);
-    setIsLoggedIn(true);
-  }, []);
-
-  const handleLogout = useCallback(() => {
-    setToken(null);
-    setRole(null);
-    setIsLoggedIn(false);
-    // Optional: Go back to welcome screen on logout?
-    // setAppMode('welcome'); 
-  }, []);
-
-  if (isLoading) {
-    return <LoadingScreen />;
-  }
-
-  // --- RENDER LOGIC ---
-  
-  // 1. Show Welcome Screen first
-  if (appMode === 'welcome') {
-    return <WelcomeScreen onSelectMode={setAppMode} />;
-  }
-
-  // 2. Show Guest Dashboard
-  if (appMode === 'guest') {
-    return <GuestDashboard onBack={() => setAppMode('welcome')} />;
-  }
-
-  // 3. Show Admin/Responder Logic (The existing system)
-  return (
-    <div className="flex flex-col min-h-screen font-sans bg-gray-50">
-      {!isLoggedIn && <Header onBack={() => setAppMode('welcome')} />}
-      
-      <main className="flex-grow flex items-start justify-center">
-        {isLoggedIn ? (
-          role === 'FieldAgent' ? (
-            <ResponderDashboard userRole={role} onLogout={handleLogout} />
-          ) : (
-            <Dashboard userRole={role} onLogout={handleLogout} />
-          )
-        ) : (
-          <Login onLoginSuccess={handleLoginSuccess} />
-        )}
-      </main>
-      
-      {!isLoggedIn && <Footer />}
-    </div>
-  );
-};
-
-// --- UI Components ---
-
-const Header = ({ onBack }) => (
-  <header className="bg-blue-800 text-white shadow-lg w-full">
-    <div className="container mx-auto p-4 flex justify-between items-center">
-       <button onClick={onBack} className="text-blue-200 hover:text-white text-sm">← Back</button>
-       <div className="text-center">
-         <h1 className="text-xl md:text-2xl font-extrabold tracking-tight">Disaster Rapid Response</h1>
-         <p className="text-sm opacity-80">Authorized Access Only</p>
-       </div>
-       <div className="w-10"></div> {/* Spacer for centering */}
-    </div>
-  </header>
-);
-
-const Footer = () => (
-  <footer className="bg-gray-800 text-white text-center p-3 text-xs w-full mt-auto">
-    &copy; 2025 Group 3 Embile_Samaniego_Ang. All Rights Reserved.
-  </footer>
-);
-
-const LoadingScreen = () => (
-    <div className="flex items-center justify-center min-h-screen bg-gray-50">
-        <div className="text-gray-600 flex items-center animate-pulse">
-            Loading Application...
-        </div>
-    </div>
-);
-
 const Login = ({ onLoginSuccess }) => {
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -165,22 +97,21 @@ const Login = ({ onLoginSuccess }) => {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch('http://127.0.0.1:5000/api/v1/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: username, password }),
+      // 1. SUPABASE LOGIN
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email,
+        password: password,
       });
 
-      const data = await response.json();
+      if (error) throw error;
 
-      if (response.ok && data.status === 'authenticated') {
-        onLoginSuccess(data.token, data.role);
-      } else {
-        setError(data.message || 'Authentication failed.');
-      }
+      // 2. DETERMINE ROLE
+      const userRole = email.includes('admin') ? 'Commander' : 'FieldAgent';
+      onLoginSuccess(data.session, userRole);
+
     } catch (err) {
-      console.error('Login Network Error:', err);
-      setError('Could not connect to the API server.');
+      console.error('Login Error:', err.message);
+      setError('Authentication failed. Please check your email and password.');
     } finally {
       setIsSubmitting(false);
     }
@@ -196,13 +127,13 @@ const Login = ({ onLoginSuccess }) => {
           </div>
         )}
         <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Agency ID</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
           <input
-            type="text"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
             className="w-full p-3 border-2 border-gray-300 rounded-lg focus:border-red-500 outline-none"
-            placeholder="e.g. Cmdr-001"
+            placeholder="admin@quickdart.com"
             required
             disabled={isSubmitting}
           />
@@ -228,8 +159,75 @@ const Login = ({ onLoginSuccess }) => {
         </button>
       </form>
       <p className="mt-6 text-xs text-center text-gray-500 border-t pt-4">
-        Test Credentials: Cmdr-001/password123 | Agent-47/fieldpass
+        Powered by Supabase Auth
       </p>
+    </div>
+  );
+};
+
+// --- MAIN APP LOGIC ---
+
+const App = () => {
+  const [appMode, setAppMode] = useState('welcome'); 
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [role, setRole] = useState(null);
+  const [session, setSession] = useState(null); 
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session) {
+        const userEmail = session.user.email;
+        const userRole = userEmail.includes('admin') ? 'Commander' : 'FieldAgent';
+        handleLoginSuccess(session, userRole);
+      }
+      setIsLoading(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (!session) {
+        setIsLoggedIn(false);
+        setRole(null);
+      }
+    });
+  
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleLoginSuccess = useCallback((session, receivedRole) => {
+    setRole(receivedRole);
+    setIsLoggedIn(true);
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    await supabase.auth.signOut();
+    setRole(null);
+    setIsLoggedIn(false);
+    setAppMode('welcome'); 
+  }, []);
+
+  if (isLoading) return <LoadingScreen />;
+
+  if (appMode === 'welcome') return <WelcomeScreen onSelectMode={setAppMode} />;
+  if (appMode === 'guest') return <GuestDashboard onBack={() => setAppMode('welcome')} />;
+
+  return (
+    <div className="flex flex-col min-h-screen font-sans bg-gray-50">
+      {!isLoggedIn && <Header onBack={() => setAppMode('welcome')} />}
+      <main className="flex-grow flex items-start justify-center">
+        {isLoggedIn ? (
+          role === 'FieldAgent' ? (
+            <ResponderDashboard userRole={role} onLogout={handleLogout} />
+          ) : (
+            <Dashboard userRole={role} onLogout={handleLogout} />
+          )
+        ) : (
+          <Login onLoginSuccess={handleLoginSuccess} />
+        )}
+      </main>
+      {!isLoggedIn && <Footer />}
     </div>
   );
 };
