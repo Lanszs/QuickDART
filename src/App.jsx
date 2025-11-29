@@ -57,7 +57,7 @@ const WelcomeScreen = ({ onSelectMode }) => (
         </div>
         <h3 className="text-2xl font-bold text-white mb-2">Authorized Personnel</h3>
         <p className="text-blue-200 text-center text-sm mb-6">
-          Log in as Commander, Analyst, or Field Responder to access secure tools.
+          Log in as Admin or Field Responder to access secure tools.
         </p>
         <div className="mt-auto flex items-center gap-2 text-red-400 font-bold text-sm group-hover:text-red-300">
           Secure Login <ArrowRight size={16} />
@@ -71,9 +71,9 @@ const WelcomeScreen = ({ onSelectMode }) => (
         <div className="p-4 bg-blue-500 rounded-2xl mb-6 shadow-lg shadow-blue-500/20 group-hover:shadow-blue-500/40 transition-shadow">
           <User size={40} className="text-white" />
         </div>
-        <h3 className="text-2xl font-bold text-white mb-2">Public Guest</h3>
+        <h3 className="text-2xl font-bold text-white mb-2">Public User</h3>
         <p className="text-blue-200 text-center text-sm mb-6">
-          View public incident maps, safety announcements, and emergency contacts.
+          Report Public Incidents
         </p>
         <div className="mt-auto flex items-center gap-2 text-blue-400 font-bold text-sm group-hover:text-blue-300">
           Continue as Guest <ArrowRight size={16} />
@@ -127,7 +127,7 @@ const Login = ({ onLoginSuccess }) => {
           </div>
         )}
         <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
           <input
             type="email"
             value={email}

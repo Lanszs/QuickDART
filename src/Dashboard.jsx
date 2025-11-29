@@ -206,7 +206,7 @@ const Dashboard = ({ userRole, onLogout }) => {
             <header className="bg-blue-900 text-white p-4 shadow-md flex flex-col md:flex-row justify-between items-center gap-4">
                 <h1 className="text-xl font-bold flex items-center gap-2">
                     <Activity className="h-6 w-6 text-red-500" />
-                    DRR Command Center
+                    DRR Admin Center
                 </h1>
                 
                 <div className="flex items-center gap-4 text-sm">
