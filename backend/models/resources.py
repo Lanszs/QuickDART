@@ -28,6 +28,7 @@ class Team(Base):
     specialization = Column(String, nullable=False) # e.g., "Medical", "Search & Rescue"
     status = Column(String, default="Idle") # Idle, Deployed, Resting
     personnel_count = Column(Integer, default=0)
+    current_task = Column(String, nullable=True) # <--- NEW FIELD
 
     def to_dict(self):
         return {
@@ -35,5 +36,6 @@ class Team(Base):
             "name": self.name,
             "specialization": self.specialization,
             "status": self.status,
-            "personnel_count": self.personnel_count
+            "personnel_count": self.personnel_count,
+            "current_task": self.current_task # <--- Include in API response
         }

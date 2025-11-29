@@ -1,15 +1,26 @@
 import sys
+import os
+
+# --- 🔧 FIX: FORCE PYTHON TO FIND THE 'MODELS' FOLDER ---
+# This MUST happen BEFORE you import 'from models...'
+# This tells Python: "The current folder (backend) is part of the path!"
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(current_dir)
+# -------------------------------------------------------
+
 sys.stdout.reconfigure(encoding='utf-8')  # Fix encoding
 sys.stdout.flush()  # Force immediate output
+
 from flask import Flask, jsonify , request
 from flask_cors import CORS # 1. Import CORS
 from flask_socketio import SocketIO, emit
-# Import the authentication logic we created in the User model
+
+# --- NOW these imports will work because the path is fixed ---
 from models.user import authenticate_user
 from models.database import SessionLocal 
 from models.report import Report
-from models.resources import Asset, Team # <--- NEW IMPORT
-import os
+from models.resources import Asset, Team 
+
 import io
 import torch
 import torch.nn as nn
@@ -64,7 +75,7 @@ transform = transforms.Compose([
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
-# --- NEW ROUTES ---
+# --- RESOURCES ROUTES ---
 @app.route('/api/v1/resources', methods=['GET'])
 def get_resources():
     session = SessionLocal()
@@ -118,8 +129,221 @@ def login_user():
         return jsonify({"message": "Invalid credentials. Please check your Agency ID and Password.", "status": "failed"}), 401
     
 
+# --- TEAM MANAGEMENT ROUTES ---
+@app.route('/api/v1/teams/<int:team_id>/deploy', methods=['PUT'])
+def deploy_team(team_id):
+    """Deploy or recall a team"""
+    print(f"\n{'='*50}")
+    print(f"🔧 DEPLOY TEAM REQUEST - ID: {team_id}")
+    
+    session = SessionLocal()
+    try:
+        team = session.query(Team).filter(Team.id == team_id).first()
+        if not team:
+            print(f"❌ Team #{team_id} not found")
+            return jsonify({"error": "Team not found"}), 404
+        
+        print(f"✅ Found team: {team.name}")
+        
+        data = request.get_json()
+        print(f"📦 Received data: {data}")
+        
+        new_status = data.get('status')
+        print(f"📝 New status: {new_status}")
+        
+        if new_status not in ['Deployed', 'Idle', 'Resting']:
+            print(f"❌ Invalid status: {new_status}")
+            return jsonify({"error": "Invalid status"}), 400
+        
+        old_status = team.status
+        team.status = new_status
+        
+        session.commit()
+        session.refresh(team)
+        
+        print(f"✅ Status updated: {old_status} → {team.status}")
+        
+        # Broadcast update via WebSocket
+        socketio.emit('resource_updated', {
+            'type': 'team',
+            'action': 'status_changed',
+            'data': team.to_dict()
+        })
+        
+        print(f"✅ Update successful")
+        print(f"{'='*50}\n")
+        
+        return jsonify(team.to_dict()), 200
+        
+    except Exception as e:
+        session.rollback()
+        print(f"❌ ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        print(f"{'='*50}\n")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
 
 
+@app.route('/api/v1/teams/<int:team_id>/notify', methods=['POST'])
+def notify_team(team_id):
+    """Send notification to a team"""
+    print(f"\n{'='*50}")
+    print(f"📢 NOTIFY TEAM REQUEST - ID: {team_id}")
+    
+    session = SessionLocal()
+    try:
+        team = session.query(Team).filter(Team.id == team_id).first()
+        if not team:
+            print(f"❌ Team #{team_id} not found")
+            return jsonify({"error": "Team not found"}), 404
+        
+        print(f"✅ Found team: {team.name}")
+        
+        data = request.get_json()
+        message = data.get('message', '')
+        
+        print(f"📝 Message: {message}")
+        
+        # Broadcast notification via WebSocket
+        socketio.emit('team_notification', {
+            'team_id': team_id,
+            'team_name': team.name,
+            'message': message,
+            'timestamp': datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        })
+        
+        print(f"✅ Notification sent successfully")
+        print(f"{'='*50}\n")
+        
+        return jsonify({
+            "status": "success",
+            "message": f"Notification sent to {team.name}"
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        print(f"{'='*50}\n")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+# --- ASSET MANAGEMENT ROUTES ---
+@app.route('/api/v1/assets/<int:asset_id>/deploy', methods=['PUT'])
+def deploy_asset(asset_id):
+    """Deploy or recall an asset"""
+    print(f"\n{'='*50}")
+    print(f"🔧 DEPLOY ASSET REQUEST - ID: {asset_id}")
+    
+    session = SessionLocal()
+    try:
+        asset = session.query(Asset).filter(Asset.id == asset_id).first()
+        if not asset:
+            print(f"❌ Asset #{asset_id} not found")
+            return jsonify({"error": "Asset not found"}), 404
+        
+        print(f"✅ Found asset: {asset.name}")
+        
+        data = request.get_json()
+        print(f"📦 Received data: {data}")
+        
+        new_status = data.get('status')
+        new_location = data.get('location')
+        
+        print(f"📝 New status: {new_status}")
+        print(f"📍 New location: {new_location}")
+        
+        if new_status not in ['Available', 'Deployed', 'Maintenance']:
+            print(f"❌ Invalid status: {new_status}")
+            return jsonify({"error": "Invalid status"}), 400
+        
+        old_status = asset.status
+        old_location = asset.location
+        
+        asset.status = new_status
+        if new_location:
+            asset.location = new_location
+        
+        session.commit()
+        session.refresh(asset)
+        
+        print(f"✅ Status updated: {old_status} → {asset.status}")
+        print(f"✅ Location updated: {old_location} → {asset.location}")
+        
+        # Broadcast update via WebSocket
+        socketio.emit('resource_updated', {
+            'type': 'asset',
+            'action': 'status_changed',
+            'data': asset.to_dict()
+        })
+        
+        print(f"✅ Update successful")
+        print(f"{'='*50}\n")
+        
+        return jsonify(asset.to_dict()), 200
+        
+    except Exception as e:
+        session.rollback()
+        print(f"❌ ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        print(f"{'='*50}\n")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/v1/assets/<int:asset_id>/notify', methods=['POST'])
+def notify_asset(asset_id):
+    """Send notification for an asset"""
+    print(f"\n{'='*50}")
+    print(f"📢 NOTIFY ASSET REQUEST - ID: {asset_id}")
+    
+    session = SessionLocal()
+    try:
+        asset = session.query(Asset).filter(Asset.id == asset_id).first()
+        if not asset:
+            print(f"❌ Asset #{asset_id} not found")
+            return jsonify({"error": "Asset not found"}), 404
+        
+        print(f"✅ Found asset: {asset.name}")
+        
+        data = request.get_json()
+        message = data.get('message', '')
+        
+        print(f"📝 Message: {message}")
+        
+        # Broadcast notification via WebSocket
+        socketio.emit('asset_notification', {
+            'asset_id': asset_id,
+            'asset_name': asset.name,
+            'message': message,
+            'timestamp': datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        })
+        
+        print(f"✅ Notification sent successfully")
+        print(f"{'='*50}\n")
+        
+        return jsonify({
+            "status": "success",
+            "message": f"Notification sent for {asset.name}"
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        print(f"{'='*50}\n")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+# --- AI ANALYSIS ROUTE ---
 @app.route('/api/v1/analyze', methods=['POST'])
 def analyze_image():
     if 'file' not in request.files:
@@ -165,6 +389,8 @@ def analyze_image():
         print(f"Prediction Error: {e}")
         return jsonify({"error": str(e)}), 500
 
+
+# --- REPORTS ROUTES ---
 @app.route('/api/v1/reports', methods=['GET', 'POST'])
 def handle_reports():
     session = SessionLocal()
@@ -246,7 +472,7 @@ def get_address_from_coords(lat, lng):
 
 @app.route('/api/v1/reports/<int:report_id>', methods=['PUT'])
 def update_report(report_id):
-     
+      
     print(f"\n{'='*50}", flush=True)
     print(f" UPDATE REQUEST for Report ID: {report_id}", flush=True)
 
