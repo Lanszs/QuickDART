@@ -72,26 +72,36 @@ const IncidentMap = ({ reports = [] }) => {
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
 
-            {/* 2. Map over the REAL reports passed from the database */}
-            {reports.map((report) => (
-                // Only render if the report has valid coordinates
-                (report.lat && report.lng) && (
-                    <Marker key={report.id} position={[report.lat, report.lng]}>
-                        <Popup>
-                            <div className="text-sm">
-                                <strong className="block text-gray-800">{report.title}</strong>
-                                <span className={`font-semibold ${report.status === 'Critical' ? 'text-red-600' : 'text-blue-600'}`}>
-                                    Status: {report.status}
-                                </span>
-                                <p className="text-xs text-gray-600 mt-1">{report.description}</p>
-                            </div>
-                        </Popup>
-                    </Marker>
-                )
-            ))}
+            {reports
+                .filter(report => report.status !== 'Cleared') 
+                .map((report) => {
+                    // --- ROBUST COORDINATE CHECK ---
+                    // Check for both 'latitude' (Database) and 'lat' (Legacy/Mock)
+                    const lat = report.latitude || report.lat;
+                    const lng = report.longitude || report.lng;
+
+                    // Only render if we have valid numbers
+                    if (lat && lng) {
+                        return (
+                            <Marker key={report.id} position={[lat, lng]}>
+                                <Popup>
+                                    <div className="text-sm">
+                                        <strong className="block text-gray-800">{report.title}</strong>
+                                        <span className={`font-semibold ${report.status === 'Critical' ? 'text-red-600' : 'text-blue-600'}`}>
+                                            Status: {report.status}
+                                        </span>
+                                        <p className="text-xs text-gray-600 mt-1">{report.description}</p>
+                                        <p className="text-[10px] text-gray-400 mt-1">{report.location}</p>
+                                    </div>
+                                </Popup>
+                            </Marker>
+                        );
+                    }
+                    return null;
+                })
+            }
         </MapContainer>
     );
 };
 
-// 2. CRITICAL: Export it as default
 export default IncidentMap;

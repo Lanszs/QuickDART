@@ -1,7 +1,7 @@
 import sys
 import os
 import uuid 
-
+import math
 # --- 🔧 FIX: FORCE PYTHON TO FIND THE 'MODELS' FOLDER ---
 # This tells Python: "The current folder (backend) is part of the path!"
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -434,8 +434,33 @@ def handle_reports():
     
     if request.method == 'GET':
         try:
+            # Check if filtering by team_id is requested
+            team_id = request.args.get('team_id')
+
             reports = session.query(Report).order_by(Report.id.desc()).all()
+
+            if team_id:
+                # 1. Get the Team's Base Location
+                team = session.query(Team).filter(Team.id == team_id).first()
+
+                if team and team.base_latitude and team.base_longitude:
+                    filtered_reports = []
+                    for r in reports:
+                        # Only check if report has valid coords
+                        if r.latitude and r.longitude:
+                            dist = haversine_distance(
+                                team.base_latitude, team.base_longitude,
+                                r.latitude, r.longitude
+                            )
+                            # 2. Check if within Radius
+                            if dist <= team.coverage_radius_km:
+                                filtered_reports.append(r)
+
+                    return jsonify([r.to_dict() for r in filtered_reports]), 200
+
+            # If no team_id or no location set, return ALL reports (for Admin)
             return jsonify([r.to_dict() for r in reports]), 200
+        
         except Exception as e:
             return jsonify({"error": str(e)}), 500
         finally:
@@ -498,6 +523,17 @@ def get_address_from_coords(lat, lng):
         print(f"Geocoding Error: {e}")
     
     return f"GPS: {lat}, {lng}"
+
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """Calculate distance (km) between two GPS points"""
+    # Convert to radians
+    lat1, lon1, lat2, lon2 = map(math.radians, [float(lat1), float(lon1), float(lat2), float(lon2)])
+    
+    dlat = lat2 - lat1 
+    dlon = lon2 - lon1 
+    a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+    c = 2 * math.asin(math.sqrt(a)) 
+    return c * 6371 # Radius of earth in km
 
 @app.route('/api/v1/reports/<int:report_id>', methods=['PUT'])
 def update_report(report_id):
@@ -605,7 +641,7 @@ def create_team():
         data = request.get_json()
         new_team = Team(
             name=data['name'],
-            specialization=data['specialization'],
+            department=data['department'],
             personnel_count=int(data['personnel_count']),
             status='Idle' # Default status
         )

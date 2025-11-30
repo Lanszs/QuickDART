@@ -48,10 +48,15 @@ const Dashboard = ({ userRole, onLogout }) => {
     const [messages, setMessages] = useState({}); 
     const chatEndRef = useRef(null);
 
+    // --- FIX: RESET STATE ON MANUAL NAVIGATION ---
     const handleNavigation = (tabName) => {
         setActiveTab(tabName);
-        setReportToValidate(null); // <--- Clears the "Sticky" Modal
+        setReportToValidate(null);
     };
+
+    // --- FILTERED REPORTS FOR INCIDENT LOG ---
+    // This creates a list that EXCLUDES "Cleared" items
+    const activeIncidentLog = reports.filter(r => r.status !== 'Cleared');
 
     const saveReport = async () => {
         if (!analysisResult) return;
@@ -117,7 +122,7 @@ const Dashboard = ({ userRole, onLogout }) => {
 
     useEffect(() => {
         fetchReports();
-        fetchTeams(); // Load teams on startup
+        fetchTeams(); 
 
         // Join Admin Room
         socket.emit('join_room', { room: 'admin_room' });
@@ -260,7 +265,6 @@ const Dashboard = ({ userRole, onLogout }) => {
                 </h1>
                 
                 <div className="flex items-center gap-4 text-sm">
-                    {/* ... Existing Header Content ... */}
                     <div className="hidden md:flex items-center gap-3 bg-blue-800/50 px-4 py-1.5 rounded-lg border border-blue-700/50 mx-2">
                         <Clock size={18} className="text-blue-300" />
                         <div className="flex flex-col leading-tight text-right">
@@ -297,7 +301,7 @@ const Dashboard = ({ userRole, onLogout }) => {
                 {/* --- Main Content --- */}
                 <main className="flex-1 p-0 overflow-y-auto">
                     
-                    {/* VIEW 1: INCIDENTS (FIXED: Restored Validate Button) */}
+                    {/* VIEW 1: INCIDENTS (FILTERED) */}
                     {activeTab === 'incidents' && (
                         <div className="p-6">
                             {/* AI Upload Section */}
@@ -332,19 +336,28 @@ const Dashboard = ({ userRole, onLogout }) => {
                             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
                                 <div className="lg:col-span-2 bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col h-[700px]">
                                     <h2 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2"><MapIcon className="text-blue-600" /> Live Incident Map</h2>
+                                    {/* PASS ALL REPORTS TO MAP (It filters itself for pins) */}
                                     <div className="flex-1 rounded-lg overflow-hidden border border-gray-300 relative z-0"><IncidentMap reports={reports} /></div>
                                 </div>
                                 <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col h-[600px]">
                                     <div className="flex justify-between items-center mb-4">
-                                        <div className="flex items-center gap-2"><h2 className="text-lg font-semibold text-gray-800">Incident Log</h2><span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs font-bold border border-gray-200">{reports.length}</span></div>
+                                        <div className="flex items-center gap-2">
+                                            <h2 className="text-lg font-semibold text-gray-800">Incident Log</h2>
+                                            {/* UPDATE COUNT TO SHOW ONLY ACTIVE */}
+                                            <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs font-bold border border-gray-200">{activeIncidentLog.length}</span>
+                                        </div>
                                         <button onClick={fetchReports} className="text-gray-500 hover:text-blue-600" title="Refresh"><RefreshCw size={16} /></button>
                                     </div>
                                     
                                     <div className="flex-1 overflow-y-auto pr-2 space-y-3">
-                                        {isLoadingReports ? <div className="text-center text-gray-400 py-4">Loading reports...</div> : reports.length === 0 ? <div className="text-center text-gray-400 py-4">No active incidents.</div> : reports.map((report) => (
+                                        {isLoadingReports ? <div className="text-center text-gray-400 py-4">Loading reports...</div> : activeIncidentLog.length === 0 ? <div className="text-center text-gray-400 py-4">No active incidents.</div> : activeIncidentLog.map((report) => (
                                             <div key={report.id} onClick={() => toggleReport(report.id)} className={`p-4 rounded-xl border transition-all cursor-pointer group ${expandedReportId === report.id ? "bg-blue-50 border-blue-200 shadow-md" : "bg-white border-gray-100 hover:border-blue-200 hover:shadow-sm"}`}>
                                                 <div className="flex justify-between items-start mb-2">
-                                                    <div className="flex flex-col"><span className="font-bold text-gray-800 text-sm">{report.title}</span><span className="text-xs text-gray-400">{report.timestamp}</span></div>
+                                                    <div className="flex flex-col">
+                                                        <span className="font-bold text-gray-800 text-sm">{report.title}</span>
+                                                        <span className="text-xs text-gray-500 flex items-center gap-1 mt-0.5"><MapIcon size={12} /> {report.location || "Unknown"}</span>
+                                                        <span className="text-[10px] text-gray-400 mt-0.5">{report.timestamp}</span>
+                                                    </div>
                                                     <StatusBadge status={report.status} />
                                                 </div>
 
@@ -356,7 +369,7 @@ const Dashboard = ({ userRole, onLogout }) => {
                                                     </div>
                                                 )}
 
-                                                {/* Expanded View (Restored Validate Button!) */}
+                                                {/* Expanded View */}
                                                 {expandedReportId === report.id && (
                                                     <div className="mt-3 pt-3 border-t border-blue-100/50 text-sm text-gray-700 space-y-3 animate-in slide-in-from-top-2 duration-200">
                                                         <div><span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Situation Report</span><p className="text-sm mt-1 leading-relaxed">{report.description}</p></div>
@@ -367,7 +380,7 @@ const Dashboard = ({ userRole, onLogout }) => {
                                                         </div>
                                                         <div className="flex justify-center pt-1"><ChevronUp size={16} className="text-blue-400" /></div>
                                                         
-                                                        {/* --- RESTORED BUTTON --- */}
+                                                        {/* VALIDATE BUTTON */}
                                                         <div className="flex justify-end pt-2">
                                                             <button 
                                                                 onClick={(e) => { e.stopPropagation(); handleValidateClick(report.id); }} 
@@ -386,10 +399,10 @@ const Dashboard = ({ userRole, onLogout }) => {
                         </div>
                     )}
 
-                    {/* VIEW 2: ASSETS (Unchanged) */}
+                    {/* VIEW 2: ASSETS */}
                     {activeTab === 'assets' && <AssetsTeams />}
 
-                    {/* VIEW 3: DISPATCH / CHAT */}
+                    {/* VIEW 3: DISPATCH */}
                     {activeTab === 'dispatch' && (
                         <div className="flex h-full p-6 gap-6">
                             <div className="w-1/3 bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col">
@@ -398,7 +411,7 @@ const Dashboard = ({ userRole, onLogout }) => {
                                     {teams.map(team => (
                                         <div key={team.id} onClick={() => setSelectedChatTeam(team)} className={`p-4 border-b border-gray-100 cursor-pointer hover:bg-blue-50 transition-colors ${selectedChatTeam?.id === team.id ? 'bg-blue-50 border-l-4 border-blue-600' : ''}`}>
                                             <div className="flex justify-between items-start"><span className="font-bold text-gray-800">{team.name}</span><span className={`h-2 w-2 rounded-full ${team.status === 'Deployed' ? 'bg-red-500' : 'bg-green-500'}`}></span></div>
-                                            <p className="text-xs text-gray-500 mt-1 truncate">{team.specialization}</p>
+                                            <p className="text-xs text-gray-500 mt-1 truncate">{team.department}</p>
                                         </div>
                                     ))}
                                 </div>

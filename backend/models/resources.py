@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, ForeignKey
 from sqlalchemy.orm import relationship
 from .database import Base
 
@@ -10,6 +10,8 @@ class Asset(Base):
     type = Column(String, nullable=False) # e.g., "Vehicle", "Drone", "Medical Kit"
     status = Column(String, default="Available") # Available, Deployed, Maintenance
     location = Column(String, nullable=True) # e.g., "Base Camp"
+    team_id = Column(Integer, ForeignKey('teams.id'), nullable=True)
+    team = relationship("Team", back_populates="assets")
 
     def to_dict(self):
         return {
@@ -17,7 +19,8 @@ class Asset(Base):
             "name": self.name,
             "type": self.type,
             "status": self.status,
-            "location": self.location
+            "location": self.location,
+            "team_id": self.team_id
         }
 
 class Team(Base):
@@ -25,17 +28,29 @@ class Team(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False) # e.g., "Alpha Squad"
-    specialization = Column(String, nullable=False) # e.g., "Medical", "Search & Rescue"
+    department = Column(String, nullable=False)
     status = Column(String, default="Idle") # Idle, Deployed, Resting
     personnel_count = Column(Integer, default=0)
     current_task = Column(String, nullable=True) # <--- NEW FIELD
+
+    # --- NEW: LOCATION & AREA OF RESPONSIBILITY ---
+    base_latitude = Column(Float, nullable=True)  # Where the team is stationed
+    base_longitude = Column(Float, nullable=True) 
+    coverage_radius_km = Column(Float, default=5.0) # How far they respond (e.g., 5km)
+    # ----------------------------------------------
+
+    assets = relationship("Asset", back_populates="team")
 
     def to_dict(self):
         return {
             "id": self.id,
             "name": self.name,
-            "specialization": self.specialization,
+            "department": self.department, # <--- New
             "status": self.status,
             "personnel_count": self.personnel_count,
-            "current_task": self.current_task # <--- Include in API response
+            "current_task": self.current_task, # <--- Include in API response
+            "base_latitude": self.base_latitude,    # Return lat
+            "base_longitude": self.base_longitude,  # Return lng
+            "coverage_radius_km": self.coverage_radius_km,
+            "assets": [a.to_dict() for a in self.assets] # <--- Include assets in team data
         }
