@@ -1,6 +1,7 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Text
 from sqlalchemy.orm import relationship
 from .database import Base
+from datetime import datetime
 
 class Asset(Base):
     __tablename__ = 'assets'
@@ -54,3 +55,21 @@ class Team(Base):
             "coverage_radius_km": self.coverage_radius_km,
             "assets": [a.to_dict() for a in self.assets] # <--- Include assets in team data
         }
+    
+class Message(Base):
+        __tablename__ = 'messages'
+
+        id = Column(Integer, primary_key=True, index=True)
+        sender = Column(String, nullable=False)      # e.g. "Admin" or "Flood Response Unit"
+        target_room = Column(String, nullable=False) # e.g. "team_1"
+        content = Column(String, nullable=False)
+        timestamp = Column(DateTime, default=datetime.utcnow)
+
+        def to_dict(self):
+            return {
+                "id": self.id,
+                "sender": self.sender,
+                "target_room": self.target_room,
+                "message": self.content, # Frontend expects 'message', not 'content'
+                "timestamp": self.timestamp.isoformat() + "Z"
+            }

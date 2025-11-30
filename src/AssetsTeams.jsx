@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Truck, Users, Wrench, CheckCircle, Clock, Activity, RefreshCw, Radio, 
     Droplet, Flame, Mountain, Heart, Package, Phone, Shield, Dog, Send, Navigation, XCircle, Plus, Trash2, 
-    ChevronRight, Box } from 'lucide-react';
+    ChevronRight, Box, Lock, Mail, MapPin, Search, Loader2 } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { io } from 'socket.io-client';
 
@@ -14,7 +14,6 @@ const AssetsTeams = () => {
     const [showNotifyModal, setShowNotifyModal] = useState(false);
     const [showDeployModal, setShowDeployModal] = useState(false);
     const [showAddTeamModal, setShowAddTeamModal] = useState(false);
-    const [showAddAssetModal, setShowAddAssetModal] = useState(false);
 
     // --- DEPARTMENT MODAL STATE ---
     const [selectedDepartment, setSelectedDepartment] = useState(null);
@@ -27,7 +26,23 @@ const AssetsTeams = () => {
     const [deployLocation, setDeployLocation] = useState('');
     const [deployTask, setDeployTask] = useState('');
 
-    const [newTeam, setNewTeam] = useState({ name: '', department: 'BFP', personnel_count: 5 });
+    // --- GEOCODING STATE ---
+    const [searchQuery, setSearchQuery] = useState('');
+    const [isSearching, setIsSearching] = useState(false);
+    const [foundAddress, setFoundAddress] = useState('');
+    const [locationSuggestions, setLocationSuggestions] = useState([]);
+
+    const [newTeam, setNewTeam] = useState({ 
+        name: '', 
+        department: 'BFP', 
+        personnel_count: 5,
+        email: '', 
+        password: '',
+        base_latitude: '',  
+        base_longitude: '', 
+        coverage_radius_km: 3 
+    });
+
     const [newAsset, setNewAsset] = useState({ name: '', type: 'Vehicle', location: 'Base' });
 
     const fetchData = async () => {
@@ -74,6 +89,89 @@ const AssetsTeams = () => {
         };
     }, []);
 
+    useEffect(() => {
+        // Don't search if query is empty or matches the already selected address
+        if (!searchQuery.trim() || searchQuery === foundAddress) {
+            setLocationSuggestions([]);
+            return;
+        }
+
+        // Wait 500ms after user stops typing before searching
+        const delayDebounceFn = setTimeout(async () => {
+            setIsSearching(true);
+            try {
+                const query = `${searchQuery}, Philippines`;
+                const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`);
+                const results = await response.json();
+                setLocationSuggestions(results);
+            } catch (error) {
+                console.error("Geocoding error:", error);
+            } finally {
+                setIsSearching(false);
+            }
+        }, 500); // 500ms delay
+
+        return () => clearTimeout(delayDebounceFn);
+    }, [searchQuery, foundAddress]);
+
+    const handleSelectLocation = (location) => {
+        setNewTeam(prev => ({
+            ...prev,
+            base_latitude: parseFloat(location.lat),
+            base_longitude: parseFloat(location.lon)
+        }));
+        
+        // Set display values
+        const shortName = location.display_name.split(',')[0]; // Just the first part
+        setFoundAddress(location.display_name); // Keep full address for verification logic
+        setSearchQuery(shortName);
+        setSearchQuery(location.display_name); // Update input box
+        toast.success("Coordinates Locked!");
+        
+        setLocationSuggestions([]); // Hide dropdown
+    };
+
+    const handleSearchInput = (e) => {
+        const val = e.target.value;
+        setSearchQuery(val);
+
+        // If we had a locked address, and the user types something new, UNLOCK IT.
+        if (foundAddress) {
+            setFoundAddress(''); // Clear the "Locked" indicator
+            setNewTeam(prev => ({
+                ...prev,
+                base_latitude: '', // Clear coords so they can't submit invalid data
+                base_longitude: ''
+            }));
+        }
+    };
+
+    const handleSearchLocation = async () => {
+        if (!searchQuery.trim()) return;
+        
+        setIsSearching(true);
+        setLocationSuggestions([]);
+        setFoundAddress('');
+
+        try {
+            // Add 'Philippines' to search context to improve accuracy
+            const query = `${searchQuery}, Philippines`;
+            const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`);
+            const results = await response.json();
+
+           if (results && results.length > 0) {
+                setLocationSuggestions(results); // Store ALL results, don't auto-select
+            } else {
+                toast.error("Location not found. Try adding city name.");
+            }
+        } catch (error) {
+            console.error("Geocoding error:", error);
+            toast.error("Error searching location.");
+        } finally {
+            setIsSearching(false);
+        }
+    };
+
     const getDepartments = () => {
         const depts = {};
         
@@ -93,7 +191,6 @@ const AssetsTeams = () => {
             }
             depts[deptName].teams.push(team);
             depts[deptName].totalPersonnel += team.personnel_count;
-            // Assets are now nested inside teams from the backend
             depts[deptName].totalAssets += (team.assets ? team.assets.length : 0);
         });
 
@@ -102,6 +199,23 @@ const AssetsTeams = () => {
 
     const departments = getDepartments();
 
+    // --- FIX: AUTO-REFRESH MODAL WHEN DATA CHANGES ---
+    useEffect(() => {
+        if (showDeptModal && selectedDepartment) {
+            // Find the freshest version of the currently open department
+            const updatedDept = departments.find(d => d.name === selectedDepartment.name);
+            
+            if (updatedDept) {
+                setSelectedDepartment(updatedDept);
+            } else {
+                // Edge case: If the last team in a department was deleted, the dept might disappear
+                // In that case, we can close the modal or leave it empty
+                setShowDeptModal(false); 
+            }
+        }
+    }, [data]); // Runs whenever 'data' updates (e.g., after delete/add)
+    // ------------------------------------------------
+
     const getDeptIcon = (name) => {
         if (name === 'BFP') return <div className="p-3 bg-red-100 rounded-lg text-red-600"><Flame size={24} /></div>;
         if (name === 'PNP') return <div className="p-3 bg-blue-100 rounded-lg text-blue-600"><Shield size={24} /></div>;
@@ -109,9 +223,16 @@ const AssetsTeams = () => {
         if (name === 'Barangay') return <div className="p-3 bg-orange-100 rounded-lg text-orange-600"><Users size={24} /></div>;
         return <div className="p-3 bg-gray-100 rounded-lg text-gray-600"><Box size={24} /></div>;
     };
+
     // --- CRUD OPERATIONS ---
 
     const handleAddTeam = async () => {
+       
+        if(!newTeam.email || !newTeam.password || !newTeam.name || !newTeam.base_latitude) {
+            toast.warning("Please fill in all fields and verify location.");
+            return;
+        }
+
         try {
             const response = await fetch('http://127.0.0.1:5000/api/v1/teams', {
                 method: 'POST',
@@ -119,10 +240,16 @@ const AssetsTeams = () => {
                 body: JSON.stringify(newTeam)
             });
             if (response.ok) {
-                toast.success("Team added successfully!");
+                toast.success("Team & Account created!");
                 setShowAddTeamModal(false);
+                setNewTeam({ name: '', department: 'BFP', personnel_count: 5, email: '', password: '', base_latitude: '', base_longitude: '', coverage_radius_km: 3 });
+                setSearchQuery('');
+                setFoundAddress('');
                 fetchData();
             } 
+            else {
+                 toast.error("Failed to create team.");
+             }
             
         }   catch (error) {
                 toast.error("Error adding team");
@@ -135,22 +262,14 @@ const AssetsTeams = () => {
         fetchData();
     };
 
-    const handleAddAsset = async () => { 
-         try {
-             const response = await fetch('http://127.0.0.1:5000/api/v1/assets', {
-                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newAsset)
-             });
-             if (response.ok) { toast.success("Asset added!"); setShowAddAssetModal(false); fetchData(); }
-        } catch (e) { toast.error("Error adding asset"); }
-    };
-
+   
     const handleDeleteAsset = async (id) => {
         if (!window.confirm("Delete this asset?")) return;
         await fetch(`http://127.0.0.1:5000/api/v1/assets/${id}`, { method: 'DELETE' });
         fetchData();
     };
 
-    // --- EXISTING DEPLOY LOGIC ---
+    
    const handleDeployTeam = async (teamId, newStatus, task) => {
         await fetch(`http://127.0.0.1:5000/api/v1/teams/${teamId}/deploy`, {
             method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, task: task })
@@ -244,9 +363,6 @@ const AssetsTeams = () => {
                     <button onClick={() => setShowAddTeamModal(true)} 
                             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 shadow-sm">
                                 <Plus size={16} /> Add Team</button>
-                    <button onClick={() => setShowAddAssetModal(true)} 
-                            className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 shadow-sm">
-                                <Plus size={16} /> Add Asset</button>
                     <button onClick={fetchData} className="flex items-center gap-2 px-4 py-2 bg-white text-gray-600 border border-gray-300 rounded-lg"><RefreshCw size={16} /></button>
                 </div>
             </div>
@@ -374,17 +490,73 @@ const AssetsTeams = () => {
             {/* --- ADD TEAM MODAL (Updated for Department) --- */}
             {showAddTeamModal && (
                 <Modal onClose={() => setShowAddTeamModal(false)}>
-                    <h3 className="text-xl font-bold mb-4">Add New Team</h3>
+                    <h3 className="text-xl font-bold mb-4">Create New Team & Account</h3>
                     <div className="space-y-3">
-                        <input type="text" className="w-full p-2 border rounded" value={newTeam.name} onChange={e => setNewTeam({...newTeam, name: e.target.value})} placeholder="Team Name" />
-                        <select className="w-full p-2 border rounded" value={newTeam.department} onChange={e => setNewTeam({...newTeam, department: e.target.value})}>
-                            <option value="BFP">BFP (Fire)</option>
-                            <option value="PNP">PNP (Police)</option>
-                            <option value="EMS">EMS (Medical)</option>
-                            <option value="Barangay">Barangay</option>
-                        </select>
-                        <input type="number" className="w-full p-2 border rounded" value={newTeam.personnel_count} onChange={e => setNewTeam({...newTeam, personnel_count: e.target.value})} placeholder="Personnel Count" />
-                        <button onClick={handleAddTeam} className="w-full py-2 bg-indigo-600 text-white rounded">Save</button>
+                        {/* General Info */}
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 mb-1">Team Details</label>
+                            <input type="text" className="w-full p-2 border rounded mb-2" value={newTeam.name} onChange={e => setNewTeam({...newTeam, name: e.target.value})} placeholder="Team Name (e.g. Station 5)" />
+                            <div className="flex gap-2">
+                                <select className="w-1/2 p-2 border rounded" value={newTeam.department} onChange={e => setNewTeam({...newTeam, department: e.target.value})}>
+                                    <option value="BFP">BFP</option><option value="PNP">PNP</option><option value="EMS">EMS</option><option value="Barangay">Barangay</option>
+                                </select>
+                                <input type="number" className="w-1/2 p-2 border rounded" value={newTeam.personnel_count} onChange={e => setNewTeam({...newTeam, personnel_count: e.target.value})} placeholder="Personnel" />
+                            </div>
+                        </div>
+                        
+                       {/* Location Details (NEW UI) */}
+                        <div className="bg-gray-50 p-3 rounded-lg border border-gray-200 relative">
+                            <label className="block text-xs font-bold text-gray-500 mb-1 flex items-center gap-1">
+                                <MapPin size={12}/> Base Location Search
+                            </label>
+                            <div className="relative">
+                                <div className="flex gap-2 mb-2">
+                                    <input 
+                                        type="text" 
+                                        className="w-full p-2 border rounded text-sm" 
+                                        value={searchQuery}
+                                        onChange={handleSearchInput}
+                                        placeholder="Type location..." 
+                                    />
+                                    {isSearching && <Loader2 className="animate-spin text-blue-600 absolute right-3 top-2" size={18} />}
+                                </div>
+
+                                {/* --- THE DROPDOWN LIST --- */}
+                                {locationSuggestions.length > 0 && (
+                                    <div className="absolute top-full left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-xl z-50 max-h-48 overflow-y-auto">
+                                        {locationSuggestions.map((loc, index) => (
+                                            <div 
+                                                key={index} 
+                                                onClick={() => handleSelectLocation(loc)}
+                                                className="p-2.5 text-xs hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0 flex items-center gap-2"
+                                            >
+                                                <MapPin size={12} className="text-gray-400"/>
+                                                {loc.display_name}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            {foundAddress && (
+                                <div className="mb-2 p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700 flex items-start gap-1">
+                                    <CheckCircle size={12} className="mt-0.5 shrink-0"/>
+                                    <span className="line-clamp-1 font-bold">Coords Locked: {newTeam.base_latitude}, {newTeam.base_longitude}</span>
+                                </div>
+                            )}
+                            
+                            <label className="block text-xs font-bold text-gray-500 mb-1 mt-2">Response Radius (km)</label>
+                            <input type="number" className="w-full p-2 border rounded text-sm" value={newTeam.coverage_radius_km} onChange={e => setNewTeam({...newTeam, coverage_radius_km: e.target.value})} />
+                        </div>
+                        
+                        {/* Login Credentials */}
+                        <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
+                            <label className="block text-xs font-bold text-blue-700 mb-1 flex items-center gap-1"><Lock size={12}/> Login Credentials</label>
+                            <input type="email" className="w-full p-2 border rounded mb-2 text-sm" value={newTeam.email} onChange={e => setNewTeam({...newTeam, email: e.target.value})} placeholder="Email Address" />
+                            <input type="password" className="w-full p-2 border rounded text-sm" value={newTeam.password} onChange={e => setNewTeam({...newTeam, password: e.target.value})} placeholder="Password" />
+                        </div>
+                        
+                        <button onClick={handleAddTeam} className="w-full py-2 bg-indigo-600 text-white rounded font-bold hover:bg-indigo-700">Create Team</button>
                     </div>
                 </Modal>
             )}
@@ -409,17 +581,6 @@ const AssetsTeams = () => {
                     <h3 className="text-xl font-bold mb-4">Notify {selectedItem?.name}</h3>
                     <textarea value={notifyMessage} onChange={(e) => setNotifyMessage(e.target.value)} placeholder="Message..." className="w-full p-3 border rounded mb-4" rows="3" />
                     <button onClick={() => console.log("Send")} className="w-full py-2 bg-green-600 text-white font-bold rounded">Send</button>
-                </Modal>
-            )}
-
-            {showAddAssetModal && (
-                <Modal onClose={() => setShowAddAssetModal(false)}>
-                    <h3 className="text-xl font-bold mb-4">Add Asset</h3>
-                    <div className="space-y-3">
-                        <input type="text" className="w-full p-2 border rounded" value={newAsset.name} onChange={e => setNewAsset({...newAsset, name: e.target.value})} placeholder="Name" />
-                        <input type="text" className="w-full p-2 border rounded" value={newAsset.location} onChange={e => setNewAsset({...newAsset, location: e.target.value})} placeholder="Location" />
-                        <button onClick={handleAddAsset} className="w-full py-2 bg-orange-600 text-white rounded">Save</button>
-                    </div>
                 </Modal>
             )}
 

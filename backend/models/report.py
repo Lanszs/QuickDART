@@ -24,7 +24,7 @@ class Report(Base):
             "title": self.title,
             "description": self.description,
             "status": self.status,
-            "timestamp": self.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+            "timestamp": self.timestamp.isoformat() + "Z",
             "location": self.location,
             "lat": self.latitude, 
             "lng": self.longitude,

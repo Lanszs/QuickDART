@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Camera, MapPin, CheckCircle, User, LogOut, Activity, FileText, Clock, AlertCircle, ChevronRight, XCircle, ImageIcon, MessageSquare, Send, Zap, Coffee, Truck, Radio, Package, Heart, Shield, AlertTriangle, Calendar, CheckSquare } from 'lucide-react';
+import { Camera, MapPin, CheckCircle, User, LogOut, Activity, FileText, Clock, AlertCircle, ChevronRight, XCircle, ImageIcon, MessageSquare, Send, Zap, Coffee, Truck, Radio, Package, Heart, Shield, AlertTriangle, Calendar, CheckSquare, Plus, Trash2, Wrench } from 'lucide-react';
 import { io } from 'socket.io-client';
 import { toast } from 'react-toastify';
 
@@ -10,7 +10,10 @@ const ResponderDashboard = ({ onLogout }) => {
     const [activeTab, setActiveTab] = useState('tasks'); 
 
     // --- USER IDENTITY STATE ---
-    const [currentTeamId, setCurrentTeamId] = useState(1); 
+    const [currentTeamId, setCurrentTeamId] = useState(() => {
+        const stored = localStorage.getItem('user_team_id');
+        return stored ? parseInt(stored) : null;
+    });
     
     // Data State
     const [reports, setReports] = useState([]); 
@@ -22,6 +25,9 @@ const ResponderDashboard = ({ onLogout }) => {
     const [showTaskModal, setShowTaskModal] = useState(false);
     const [selectedAssets, setSelectedAssets] = useState([]); 
     const [showConfirmModal, setShowConfirmModal] = useState(false);
+
+    const [showAddAssetModal, setShowAddAssetModal] = useState(false);
+    const [newAsset, setNewAsset] = useState({ name: '', type: 'Vehicle' });
 
     // --- HISTORY MODAL STATE ---
     const [selectedHistory, setSelectedHistory] = useState(null);
@@ -56,36 +62,122 @@ const ResponderDashboard = ({ onLogout }) => {
         }
     };
 
+   // --- MAIN DATA FETCHING & SOCKET SETUP ---
     useEffect(() => {
-        fetchData(); 
-        const interval = setInterval(fetchData, 5000);
+        if (!currentTeamId) return;
 
+        const fetchInitialData = async () => {
+            try {
+                // 1. Reports
+                const repRes = await fetch(`http://127.0.0.1:5000/api/v1/reports?team_id=${currentTeamId}`);
+                if (repRes.ok) {
+                    const allReports = await repRes.json();
+                    // Initial Filter: No Pending
+                    setReports(allReports.filter(r => r.status !== 'Pending'));
+                }
+
+                // 2. Team Info
+                const resRes = await fetch('http://127.0.0.1:5000/api/v1/resources');
+                if (resRes.ok) {
+                    const data = await resRes.json();
+                    const team = data.teams.find(t => t.id === parseInt(currentTeamId)); 
+                    setMyTeam(team);
+                }
+
+                // 3. Chat History
+                const chatRes = await fetch(`http://127.0.0.1:5000/api/v1/chat/history/team_${currentTeamId}`);
+                if (chatRes.ok) {
+                    setMessages(await chatRes.json());
+                }
+
+            } catch (error) {
+                console.error("Data Load Error:", error);
+            }
+        };
+
+        fetchInitialData();
+
+        // --- SOCKET LISTENERS ---
         const joinChatRoom = () => {
             socket.emit('join_room', { room: `team_${currentTeamId}` });
         };
-
         if (socket.connected) joinChatRoom();
         socket.on('connect', joinChatRoom);
 
+        // 1. Resource Updates (Team Status / Assets)
         socket.on('resource_updated', (update) => {
-            if (update.type === 'team' && update.data.id === parseInt(currentTeamId)) {
-                setMyTeam(update.data); 
+            if (update.type === 'team' || update.type === 'asset') {
+                // Refresh team info to get new status/assets
+                fetch(`http://127.0.0.1:5000/api/v1/resources`)
+                    .then(res => res.json())
+                    .then(data => {
+                        const team = data.teams.find(t => t.id === parseInt(currentTeamId)); 
+                        setMyTeam(team);
+                    });
             }
         });
 
+        // 2. Chat Messages
         socket.on('receive_message', (data) => {
             if (data.target_room === `team_${currentTeamId}`) {
                 setMessages(prev => [...prev, data]);
             }
         });
 
+        // 3. New Reports (ONLY if not Pending)
+        socket.on('new_report', (newReport) => {
+            if (newReport.status !== 'Pending') {
+                setReports(prev => [newReport, ...prev]);
+                toast.info(`New Alert: ${newReport.title}`);
+            }
+        });
+
+        // 4. Report Updates (Status Change)
+        socket.on('report_updated', (updatedReport) => {
+            setReports(prev => {
+                const exists = prev.find(r => r.id === updatedReport.id);
+                if (exists) {
+                    // If it becomes Pending (unlikely), remove it. Else update it.
+                    if (updatedReport.status === 'Pending') return prev.filter(r => r.id !== updatedReport.id);
+                    return prev.map(r => r.id === updatedReport.id ? updatedReport : r);
+                } else if (updatedReport.status !== 'Pending') {
+                    // It wasn't in our list (was Pending), now it is Active -> Add it
+                    return [updatedReport, ...prev];
+                }
+                return prev;
+            });
+        });
+
         return () => {
-            clearInterval(interval);
             socket.off('connect', joinChatRoom);
             socket.off('resource_updated');
             socket.off('receive_message');
+            socket.off('new_report');
+            socket.off('report_updated');
         };
-    }, [currentTeamId]); 
+    }, [currentTeamId]);
+
+    useEffect(() => {
+        if (activeTab === 'chat') {
+            chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        }
+    }, [messages, activeTab]);
+
+    // --- CHAT SENDING ---
+    const handleSendMessage = () => {
+        if (!chatMessage.trim() || !myTeam) return;
+
+        const payload = {
+            sender: myTeam.name, 
+            target_room: `team_${currentTeamId}`, // Send to my own room
+            message: chatMessage,
+            timestamp: new Date().toISOString()
+        };
+
+        socket.emit('send_message', payload);
+        // We DO NOT setMessages here manually. We wait for the server to echo it back.
+        setChatMessage("");
+    };
 
 
     // --- HANDLERS ---
@@ -200,23 +292,38 @@ const ResponderDashboard = ({ onLogout }) => {
         }
     };
 
+    // --- NEW: ASSET CRUD (RESPONDER SIDE) ---
+    const handleAddAsset = async () => {
+        if (!newAsset.name) return;
+        
+        try {
+            const response = await fetch('http://127.0.0.1:5000/api/v1/assets', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    name: newAsset.name, 
+                    type: newAsset.type, 
+                    location: 'Base', // Default location for new gear
+                    team_id: currentTeamId // <--- CRITICAL: Link to MY team
+                })
+            });
+
+            if (response.ok) {
+                toast.success("Asset added to Unit Inventory!");
+                setShowAddAssetModal(false);
+                setNewAsset({ name: '', type: 'Vehicle' });
+                fetchData();
+            }
+        } catch (error) {
+            toast.error("Failed to add asset");
+        }
+    };
+
     // --- UPDATED FILTER: Only show Active/Critical tasks (Hide Pending & Cleared) ---
     const myTasks = reports.filter(r => r.status === 'Active' || r.status === 'Critical');
 
     const isRespondingToThis = (task) => {
         return myTeam?.status === 'Deployed' && myTeam?.current_task === task.title;
-    };
-
-    const handleSendMessage = () => {
-        if (!chatMessage.trim() || !myTeam) return;
-        const payload = {
-            sender: myTeam.name, 
-            target_room: `team_${currentTeamId}`, 
-            message: chatMessage,
-            timestamp: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
-        };
-        socket.emit('send_message', payload);
-        setChatMessage("");
     };
 
     const updateMyStatus = async (newStatus) => {
@@ -259,6 +366,7 @@ const ResponderDashboard = ({ onLogout }) => {
                     <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Field Operations</div>
                     <NavButton active={activeTab === 'tasks'} onClick={() => setActiveTab('tasks')} icon={<CheckCircle size={18} />} label="My Tasks" />
                     <NavButton active={activeTab === 'chat'} onClick={() => setActiveTab('chat')} icon={<MessageSquare size={18} />} label="Command Chat" />
+                    <NavButton active={activeTab === 'inventory'} onClick={() => setActiveTab('inventory')} icon={<Truck size={18} />} label="Inventory" />
                     <NavButton active={activeTab === 'incidents'} onClick={() => setActiveTab('incidents')} icon={<FileText size={18} />} label="Incident Log" />
                     
                     <div className="flex-grow"></div>
@@ -337,17 +445,74 @@ const ResponderDashboard = ({ onLogout }) => {
                         </div>
                     )}
 
-                    {/* --- TAB: CHAT --- */}
-                    {activeTab === 'chat' && (
+                    {/* --- TAB: INVENTORY (NEW) --- */}
+                    {activeTab === 'inventory' && (
+                        <div className="max-w-4xl mx-auto">
+                            <div className="flex items-center justify-between mb-6">
+                                <h2 className="text-2xl font-bold text-gray-800">Unit Inventory</h2>
+                                <button onClick={() => setShowAddAssetModal(true)} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm"><Plus size={16} /> Add Asset</button>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {myTeam?.assets && myTeam.assets.length > 0 ? (
+                                    myTeam.assets.map(asset => (
+                                        <div key={asset.id} className="bg-white p-4 rounded-xl border border-gray-200 flex items-center justify-between">
+                                            <div className="flex items-center gap-3">
+                                                <div className="p-2 bg-gray-100 rounded-lg">{getAssetIcon(asset.type)}</div>
+                                                <div><p className="font-bold text-gray-800">{asset.name}</p><p className="text-xs text-gray-500">{asset.type}</p></div>
+                                            </div>
+                                            <span className={`px-2 py-1 rounded text-xs font-bold ${asset.status === 'Deployed' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{asset.status}</span>
+                                        </div>
+                                    ))
+                                ) : <p className="text-gray-400 col-span-2 text-center">No assets assigned.</p>}
+                            </div>
+                        </div>
+                    )}
+
+                   {activeTab === 'chat' && (
                         <div className="max-w-4xl mx-auto h-[calc(100vh-140px)] flex flex-col bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-                            <div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center"><h2 className="font-bold text-gray-800 flex items-center gap-2"><MessageSquare className="text-blue-600" /> Command Center Link</h2></div>
+                            <div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+                                <h2 className="font-bold text-gray-800 flex items-center gap-2">
+                                    <MessageSquare className="text-blue-600" /> Command Center Link
+                                </h2>
+                            </div>
+                            
                             <div className="flex-1 p-6 overflow-y-auto bg-gray-50/50 space-y-4">
                                 {messages.map((msg, index) => (
-                                    <div key={index} className={`flex ${msg.sender === 'Admin' ? 'justify-start' : 'justify-end'}`}><div className={`max-w-[80%] p-3 rounded-2xl shadow-sm ${msg.sender === 'Admin' ? 'bg-white text-gray-800 border border-gray-200 rounded-bl-none' : 'bg-blue-600 text-white rounded-br-none'}`}><p className="text-sm">{msg.message}</p></div></div>
+                                    <div key={index} className={`flex ${msg.sender === 'Admin' ? 'justify-start' : 'justify-end'}`}>
+                                        <div className={`max-w-[80%] p-3 rounded-2xl shadow-sm ${msg.sender === 'Admin' ? 'bg-white text-gray-800 border border-gray-200 rounded-bl-none' : 'bg-blue-600 text-white rounded-br-none'}`}>
+                                            
+                                            {/* Message Text */}
+                                            <p className="text-sm">{msg.message}</p>
+                                            
+                                            {/* Time Display (Correctly formatted) */}
+                                            <p className={`text-[10px] mt-1 text-right ${msg.sender === 'Admin' ? 'text-gray-400' : 'text-blue-200'}`}>
+                                                {new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                            </p>
+
+                                        </div>
+                                    </div>
                                 ))}
                                 <div ref={chatEndRef} />
                             </div>
-                            <div className="p-4 bg-white border-t border-gray-200"><div className="flex gap-2"><input type="text" value={chatMessage} onChange={(e) => setChatMessage(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()} placeholder="Type update to HQ..." className="flex-1 p-3 border border-gray-300 rounded-lg" /><button onClick={handleSendMessage} className="p-3 bg-blue-600 text-white rounded-lg"><Send size={20} /></button></div></div>
+
+                            <div className="p-4 bg-white border-t border-gray-200">
+                                <div className="flex gap-2">
+                                    <input 
+                                        type="text" 
+                                        value={chatMessage} 
+                                        onChange={(e) => setChatMessage(e.target.value)} 
+                                        onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()} 
+                                        placeholder="Type update to HQ..." 
+                                        className="flex-1 p-3 border border-gray-300 rounded-lg outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all" 
+                                    />
+                                    <button 
+                                        onClick={handleSendMessage} 
+                                        className="p-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
+                                    >
+                                        <Send size={20} />
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     )}
 
@@ -442,6 +607,23 @@ const ResponderDashboard = ({ onLogout }) => {
                             ) : (
                                 <button onClick={handleRespondNow} className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg shadow-md flex items-center gap-2"><Zap size={18} fill="currentColor" /> Respond Now</button>
                             )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* --- ADD ASSET MODAL (NEW) --- */}
+            {showAddAssetModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-2xl p-6 max-w-md w-full relative">
+                        <button onClick={() => setShowAddAssetModal(false)} className="absolute top-4 right-4 text-gray-400"><XCircle size={24} /></button>
+                        <h3 className="text-xl font-bold mb-4">Add New Asset</h3>
+                        <div className="space-y-3">
+                            <input type="text" className="w-full p-2 border rounded" value={newAsset.name} onChange={e => setNewAsset({...newAsset, name: e.target.value})} placeholder="Asset Name" />
+                            <select className="w-full p-2 border rounded" value={newAsset.type} onChange={e => setNewAsset({...newAsset, type: e.target.value})}>
+                                <option value="Vehicle">Vehicle</option><option value="Drone">Drone</option><option value="Medical Kit">Medical Kit</option>
+                            </select>
+                            <button onClick={handleAddAsset} className="w-full py-2 bg-blue-600 text-white font-bold rounded hover:bg-blue-700">Save Asset</button>
                         </div>
                     </div>
                 </div>

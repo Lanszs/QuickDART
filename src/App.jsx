@@ -106,8 +106,33 @@ const Login = ({ onLoginSuccess }) => {
       if (error) throw error;
 
       // 2. DETERMINE ROLE
-      const userRole = email.includes('admin') ? 'Commander' : 'FieldAgent';
-      onLoginSuccess(data.session, userRole);
+     const response = await fetch('http://127.0.0.1:5000/api/v1/login', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ user_id: email, password: "managed_by_supabase" }) 
+         // Note: We bypass password check in backend if supabase succeeds, or implement proper check
+      });
+
+      const localAuthResponse = await fetch('http://127.0.0.1:5000/api/v1/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: email, password: "managed_by_supabase" })
+      });
+      
+      // Fallback: If local auth fails (maybe old admin account has diff password), just infer role
+      let teamId = null;
+      let userRole = email.includes('admin') ? 'Commander' : 'FieldAgent';
+
+      if (localAuthResponse.ok) {
+          const userData = await localAuthResponse.json();
+          teamId = userData.team_id;
+          userRole = userData.role;
+      } else {
+          // Try the admin route manually if local fail
+          if(email === 'sysadmin@quickdart.com') userRole = 'Commander';
+      }
+
+      onLoginSuccess(data.session, userRole, teamId);
 
     } catch (err) {
       console.error('Login Error:', err.message);
@@ -175,12 +200,32 @@ const App = () => {
   const [session, setSession] = useState(null); 
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setSession(session);
       if (session) {
         const userEmail = session.user.email;
-        const userRole = userEmail.includes('admin') ? 'Commander' : 'FieldAgent';
-        handleLoginSuccess(session, userRole);
+        
+        // FETCH DETAILS ON AUTO-LOGIN TOO
+        try {
+            const response = await fetch('http://127.0.0.1:5000/api/v1/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: userEmail, password: "managed_by_supabase" })
+            });
+            
+            if(response.ok) {
+                const userData = await response.json();
+                handleLoginSuccess(session, userData.role, userData.team_id);
+            } else {
+                // Fallback if local db is empty but supabase session exists
+                const userRole = userEmail.includes('admin') ? 'Commander' : 'FieldAgent';
+                handleLoginSuccess(session, userRole, null);
+            }
+        } catch(e) {
+             // Offline fallback
+             const userRole = userEmail.includes('admin') ? 'Commander' : 'FieldAgent';
+             handleLoginSuccess(session, userRole, null);
+        }
       }
       setIsLoading(false);
     });
@@ -190,14 +235,23 @@ const App = () => {
       if (!session) {
         setIsLoggedIn(false);
         setRole(null);
+        localStorage.removeItem('user_team_id'); // Cleanup
       }
     });
   
     return () => subscription.unsubscribe();
   }, []);
 
-  const handleLoginSuccess = useCallback((session, receivedRole) => {
+  const handleLoginSuccess = useCallback((session, receivedRole, teamId) => {
     setRole(receivedRole);
+    
+    // SAVE TO LOCAL STORAGE SO DASHBOARD CAN READ IT
+    if (teamId) {
+        localStorage.setItem('user_team_id', teamId);
+    } else {
+        localStorage.removeItem('user_team_id');
+    }
+    
     setIsLoggedIn(true);
   }, []);
 
@@ -205,6 +259,7 @@ const App = () => {
     await supabase.auth.signOut();
     setRole(null);
     setIsLoggedIn(false);
+    localStorage.removeItem('user_team_id');
     setAppMode('welcome'); 
   }, []);
 

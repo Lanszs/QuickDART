@@ -11,12 +11,13 @@ sys.path.append(current_dir)
 sys.stdout.reconfigure(encoding='utf-8')  # Fix encoding
 sys.stdout.flush()  # Force immediate output
 
+from supabase import create_client, Client # <--- NEW IMPORT
 from flask import Flask, jsonify , request, send_from_directory
 from flask_cors import CORS 
 from flask_socketio import SocketIO, emit
 
 # --- NOW these imports will work because the path is fixed ---
-from models.user import authenticate_user
+from models.user import authenticate_user, User
 from models.database import SessionLocal 
 from models.report import Report
 from models.resources import Asset, Team 
@@ -28,6 +29,17 @@ from torchvision import models, transforms
 from PIL import Image
 from datetime import datetime
 import requests
+
+# --- SUPABASE CONFIGURATION (SCALABILITY UPGRADE) ---
+# Replace these with your actual Supabase URL and SERVICE ROLE KEY (not the anon key!)
+SUPABASE_URL = "https://udmnaaqvdlckyhexuyqv.supabase.co" 
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVkbW5hYXF2ZGxja3loZXh1eXF2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NDE2OTQwOSwiZXhwIjoyMDc5NzQ1NDA5fQ.cx3ob8w0HliIzmq1roV_zaYdOw-BbTz3VPmC6mfwy5Q"
+# Initialize Supabase Client
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    print(f"⚠️ Warning: Supabase not configured. User creation will be local only. {e}")
+    supabase = None
 
 # Set up Static Folder for Images
 app = Flask(__name__, static_folder='static') 
@@ -614,64 +626,224 @@ def handle_join(data):
 @socketio.on('send_message')
 def handle_message(data):
     """
-    data = {
-        'sender': 'Admin' or 'Flood Unit',
-        'target_room': 'team_1' or 'admin_room',
-        'message': 'Go to Sector C'
-    }
+    Saves message to DB, then relays it to Teams and Admin.
     """
     print(f"💬 Message: {data}")
     target = data.get('target_room')
     
-    # Broadcast the message to the specific room
+    # --- 1. SAVE TO DATABASE (This was missing!) ---
+    session = SessionLocal()
+    try:
+        # Import Message model inside to avoid circular errors
+        from models.resources import Message 
+        
+        new_msg = Message(
+            sender=data.get('sender'),
+            target_room=target,
+            content=data.get('message')
+        )
+        session.add(new_msg)
+        session.commit()
+        
+        # Update timestamp to match the server time format
+        data['timestamp'] = new_msg.timestamp.isoformat() + "Z"
+        
+        print("✅ Message saved to DB")
+    except Exception as e:
+        print(f"❌ Error saving message: {e}")
+        session.rollback()
+    finally:
+        session.close()
+    # -----------------------------------------------
+
+    # 2. Send to the specific target room (Responder listens here)
     emit('receive_message', data, room=target)
     
-    # If Admin sent it, also bounce it back to Admin so it shows on their screen
-    # (In a real app, you'd save to DB here)
-    if data.get('target_room') != 'admin_room':
+    # 3. If the sender is the Admin, bounce it back to the Admin Room 
+    if data.get('sender') == 'Admin':
         emit('receive_message', data, room='admin_room')
+    
+    # 4. If the sender is a Team, forward it to the Admin Room
+    else:
+        emit('receive_message', data, room='admin_room')
+
+@app.route('/api/v1/chat/history/<string:room_name>', methods=['GET'])
+def get_chat_history(room_name):
+    session = SessionLocal()
+    try:
+        # Import Message model inside to avoid circular errors
+        from models.resources import Message
+        
+        # Fetch messages for this room, sorted by time
+        messages = session.query(Message).filter(Message.target_room == room_name).order_by(Message.timestamp.asc()).all()
+        
+        return jsonify([m.to_dict() for m in messages]), 200
+    except Exception as e:
+        print(f"History Error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
 
 # --- CRUD: ADD & REMOVE RESOURCES ---
 
 @app.route('/api/v1/teams', methods=['POST'])
 def create_team():
     """Create a new Team"""
+
+    print("\n--- 🚀 STARTING CREATE TEAM PROCESS ---") # DEBUG LOG 1
+
     session = SessionLocal()
     try:
         data = request.get_json()
+
+        print(f"📦 Received Data: {data}") # DEBUG LOG 2
+
+        print("🛠️ Attempting to create local Team record...") # DEBUG LOG 3
+
         new_team = Team(
             name=data['name'],
             department=data['department'],
             personnel_count=int(data['personnel_count']),
-            status='Idle' # Default status
+            status='Idle'
         )
+
         session.add(new_team)
         session.commit()
+        session.refresh(new_team)
+
+        print(f"✅ Local Team Created! ID: {new_team.id}, Name: {new_team.name}") # DEBUG LOG 4
+
+        email = data.get('email')
+        password = data.get('password')
+
+        if email and password:
+
+            print(f"🔑 Credentials found for: {email}. Attempting Supabase creation...") # DEBUG LOG 5
+            # 2. Create User in Supabase (The "Scalable" part)
+            if supabase:
+                try:
+
+                    print("☁️ Connecting to Supabase...") # DEBUG LOG 6
+
+                    # Using admin.create_user allows us to auto-confirm the email
+                    user_data = {
+                        "email": email,
+                        "password": password,
+                        "email_confirm": True
+                    }
+                    response = supabase.auth.admin.create_user(user_data)
+                    print(f"✅ Supabase User Created Successfully! ID: {response.user.id}") # DEBUG LOG 7
+                except Exception as sb_error:
+                    print(f"❌ Supabase Error: {sb_error}")
+                    # We continue execution to ensure local DB is at least updated
+
+                else:
+                    print("⚠️ WARNING: Supabase client is None. Skipping cloud creation.") # DEBUG LOG 9
+            
+            print("🛠️ Creating local User record...") # DEBUG LOG 10
+            # 3. Create User in Local DB (Linked to the new Team)
+            new_user = User(
+                agency_id=email, 
+                password_hash="managed_by_supabase", # We don't need the real pass here anymore
+                role="FieldAgent", 
+                team_id=new_team.id # <--- THE CRITICAL LINK
+            )
+            session.add(new_user)
+            session.commit()
+
+            print("✅ Local User Linked Successfully!") # DEBUG LOG 11
         
         # Broadcast update
         socketio.emit('resource_updated', {'type': 'team', 'action': 'created'})
-        return jsonify({"message": "Team created successfully"}), 201
+
+        print("--- 🏁 PROCESS COMPLETE ---\n")
+
+        return jsonify({"message": "Team and User Account created successfully"}), 201
     except Exception as e:
         session.rollback()
+
+        print(f"\n❌ FATAL ERROR in create_team: {str(e)}") # DEBUG LOG 12
+        import traceback
+        traceback.print_exc() # This prints the exact line number of the crash
+
         return jsonify({"error": str(e)}), 500
     finally:
         session.close()
 
 @app.route('/api/v1/teams/<int:team_id>', methods=['DELETE'])
 def delete_team(team_id):
-    """Delete a Team"""
+    """Delete a Team AND all its Assets and Users (Cascade Delete)"""
+
+    print(f"\n🗑️ REQUEST: Delete Team ID {team_id}")
+
     session = SessionLocal()
     try:
         team = session.query(Team).filter(Team.id == team_id).first()
         if not team:
+            print("❌ Team not found in DB")
             return jsonify({"error": "Team not found"}), 404
         
+        # 1. DELETE Linked Assets (Instead of unlinking)
+        from models.resources import Asset
+        assets = session.query(Asset).filter(Asset.team_id == team_id).all()
+        print(f"   > Found {len(assets)} linked assets. Deleting...")
+        for asset in assets:
+            session.delete(asset) # <--- This now deletes the asset row entirely
+            
+        # 2. DELETE Linked Users
+        from models.user import User
+        users = session.query(User).filter(User.team_id == team_id).all()
+        print(f"   > Found {len(users)} linked users. Deleting...")
+
+        for user in users:
+            # --- SUPABASE DELETION LOGIC ---
+            if supabase:
+                try:
+                    print(f"     > Attempting to remove {user.agency_id} from Supabase...")
+
+                    # Get the list (Note: this returns a UserList object)
+                    response = supabase.auth.admin.list_users()
+
+                    # SAFELY EXTRACT THE USER LIST
+                    # Newer SDKs store the list inside '.users'
+                    sb_users = response.users if hasattr(response, 'users') else response
+                    
+                    target_uid = None
+                    for sb_user in sb_users:
+                        if sb_user.email.lower() == user.agency_id.lower():
+                            target_uid = sb_user.id
+                            break
+                    if target_uid:
+                        supabase.auth.admin.delete_user(target_uid)
+                        print(f"     ✅ Supabase Account Deleted: {user.agency_id}")
+                    else:
+                        print(f"     ⚠️ User {user.agency_id} not found in Supabase (might be already deleted).")
+                        
+                except Exception as sb_error:
+                    print(f"     ❌ Supabase Error (Continuing anyway): {sb_error}")
+            # -------------------------------
+        # Delete from Local DB
+            session.delete(user)
+            
+        # 4. FLUSH (Force DB to process user deletions first)
+        session.flush() 
+
+        # 5. DELETE the Team
+        print(f"   > Deleting Team '{team.name}'...")
         session.delete(team)
+        
+        # 6. COMMIT
         session.commit()
+        print("✅ DELETE SUCCESSFUL")
         
         socketio.emit('resource_updated', {'type': 'team', 'action': 'deleted'})
-        return jsonify({"message": "Team deleted"}), 200
+        return jsonify({"message": "Team and Accounts deleted successfully"}), 200
+        
     except Exception as e:
+        session.rollback()
+        print(f"❌ DELETE FAILED: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
     finally:
         session.close()
@@ -686,7 +858,8 @@ def create_asset():
             name=data['name'],
             type=data['type'], # e.g., "Vehicle", "Drone"
             location=data['location'],
-            status='Available' # Default status
+            status='Available', # Default status
+            team_id=data.get('team_id')
         )
         session.add(new_asset)
         session.commit()

@@ -6,7 +6,7 @@
 from .database import Base 
 # -----------------------------------------------------------
 
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Integer, String, ForeignKey
 from sqlalchemy.orm import relationship
 
 
@@ -19,64 +19,33 @@ class User(Base):
 
     # Database Columns
     id = Column(Integer, primary_key=True, index=True)
-    agency_id = Column(String, unique=True, index=True, nullable=False)
-    password_hash = Column(String, nullable=False)  # We will store the hashed password here
-    role = Column(String, default="FieldAgent", nullable=False)
+    agency_id = Column(String, unique=True, index=True)
+    password_hash = Column(String)  # We will store the hashed password here
+    role = Column(String)
+    team_id = Column(Integer, ForeignKey('teams.id'), nullable=True)
 
     # Relationship to other tables (if needed later, e.g., Incidents, Reports)
     # reports = relationship("DamageReport", back_populates="reporter")
 
-    def __init__(self, agency_id, password_hash, role):
-        self.agency_id = agency_id
-        self.password_hash = password_hash  # Hashed or plain (for this mock)
-        self.role = role
-
-    @staticmethod
-    def find_by_agency_id(agency_id):
-        """
-        Mock database lookup. Maps agency IDs to user data.
-        """
-        # NOTE: Passwords are plain text for simplicity in this mock, but should be hashed in production!
-        MOCK_USERS = {
-            "Cmdr-001": {"password": "password123", "role": "Commander"},
-            "Agent-47": {"password": "fieldpass", "role": "FieldAgent"},
-            "Analyst-A": {"password": "secure", "role": "DataAnalyst"},
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "agency_id": self.agency_id,
+            "role": self.role,
+            "team_id": self.team_id
         }
-        
-        user_data = MOCK_USERS.get(agency_id)
-        
-        if user_data:
-            # When creating the mock User object, we use the class defined here, 
-            # though it acts as a plain object until fully integrated with the ORM.
-            return User(
-                agency_id=agency_id,
-                # In a real app, this would be the actual hash from the DB
-                password_hash=user_data["password"], 
-                role=user_data["role"]
-            )
-        return None
-
-    def check_password(self, password):
-        """
-        Mock password check. In production, this would use a library like bcrypt.
-        """
-        return self.password_hash == password
-
-    def __repr__(self):
-        return f"<User(agency_id='{self.agency_id}', role='{self.role}')>"
 
 # --- NEW FUNCTION ADDED TO FIX IMPORTERROR IN app.py ---
 def authenticate_user(agency_id, password):
-    """
-    Authenticates a user against the mock database.
-    
-    Returns the user's role (string) on success, or None on failure.
-    """
-    user = User.find_by_agency_id(agency_id)
-    
-    if user and user.check_password(password):
-        # Authentication successful
-        return user.role
-    
-    # Authentication failed
-    return None
+    from .database import SessionLocal
+    session = SessionLocal()
+    try:
+        # Query the actual database table
+        user = session.query(User).filter(User.agency_id == agency_id).first()
+        
+        # Check if user exists and password matches
+        if user and user.password_hash == password:
+            return user.role
+        return None
+    finally:
+        session.close()

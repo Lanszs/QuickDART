@@ -18,7 +18,9 @@ import {
     MessageSquare, 
     Send,
     User,
-    CheckCircle
+    CheckCircle,
+    AlertCircle,
+    XCircle
 } from 'lucide-react';
 import DamageReports from './DamageReports';
 import { io } from 'socket.io-client';
@@ -52,6 +54,92 @@ const Dashboard = ({ userRole, onLogout }) => {
     const handleNavigation = (tabName) => {
         setActiveTab(tabName);
         setReportToValidate(null);
+    };
+
+    // --- 1. FILTER: HIDE 'CLEARED' ---
+    const visibleReports = reports.filter(r => r.status !== 'Cleared');
+
+    // --- 2. SORTING CONFIGURATION ---
+    const DAMAGE_ORDER = { 'Destroyed': 4, 'Major': 3, 'Minor': 2, 'No Damage': 1, 'Unknown': 0 };
+
+    // Sort Helper
+    const sortReportsByDamage = (reportList) => {
+    return [...reportList].sort((a, b) => {
+        const damageA = DAMAGE_ORDER[a.damage_level] || 0;
+        const damageB = DAMAGE_ORDER[b.damage_level] || 0;
+        return damageB - damageA;
+    });
+    };
+
+    const DamageBadge = ({ level }) => {
+    let colors = "bg-gray-100 text-gray-500";
+    let icon = null;
+
+    if (level === 'Destroyed') { colors = "bg-red-700 text-white"; icon = <XCircle size={12} />; }
+    else if (level === 'Major') { colors = "bg-orange-600 text-white"; icon = <AlertCircle size={12} />; }
+    else if (level === 'Minor') { colors = "bg-yellow-200 text-yellow-800"; icon = <AlertTriangle size={12} />; }
+    else if (level === 'Pending') { colors = "bg-gray-500 text-white"; icon = <AlertCircle size={12} />; }
+    
+    return (
+        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide flex items-center gap-1 ${colors}`}>
+            {icon} {level}
+        </span>
+    );
+    };
+
+    const IncidentCard = ({ report, expandedId, onToggle, onValidate }) => {
+    const isExpanded = expandedId === report.id;
+    const isPending = report.status === 'Pending';
+    
+    return (
+        <div 
+            onClick={() => onToggle(report.id)} 
+            className={`p-4 rounded-xl border transition-all cursor-pointer group ${
+                isExpanded 
+                ? "bg-blue-50 border-blue-200 shadow-md" 
+                : isPending ? "bg-orange-50 border-orange-200/50 hover:border-orange-300" : "bg-white border-gray-100 hover:border-blue-200 hover:shadow-sm"
+            }`}
+        >
+            <div className="flex justify-between items-start mb-2">
+                <div className="flex flex-col">
+                    <span className="font-bold text-gray-800 text-sm">{report.title}</span>
+                    <span className="text-xs text-gray-400">{report.timestamp}</span>
+                </div>
+                <div className="flex flex-col items-end gap-1">
+                    <StatusBadge status={report.status} />
+                    <DamageBadge level={report.damage_level} />
+                </div>
+            </div>
+
+            {!isExpanded && (
+                <div className="flex justify-between items-end mt-2">
+                    <p className="text-xs text-gray-600 line-clamp-1 w-3/4">{report.description}</p>
+                    <ChevronDown size={16} className="text-gray-400 group-hover:text-blue-500 transition-colors" />
+                </div>
+            )}
+
+            {isExpanded && (
+                <div className="mt-3 pt-3 border-t border-blue-100/50 text-sm text-gray-700 space-y-3 animate-in slide-in-from-top-2 duration-200">
+                    <div><span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Situation Report</span><p className="text-sm mt-1 leading-relaxed">{report.description}</p></div>
+                    
+                    <div className="bg-white p-3 rounded-lg border border-gray-200">
+                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Exact Location</span>
+                        <p className="text-sm font-medium text-gray-800 mt-0.5">{report.location}</p>
+                        <div className="flex items-center gap-2 mt-2 text-xs font-mono text-blue-600 bg-blue-50 px-2 py-1 rounded w-fit"><MapIcon size={12} /> {report.latitude?.toFixed(5)}, {report.longitude?.toFixed(5)}</div>
+                    </div>
+
+                    <div className="flex justify-end pt-2">
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); onValidate(report.id); }} 
+                            className="flex items-center gap-2 bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-red-700 transition-colors"
+                        >
+                            <FileText size={14} /> Triage & Validate
+                        </button>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
     };
 
     // --- FILTERED REPORTS FOR INCIDENT LOG ---
@@ -120,6 +208,7 @@ const Dashboard = ({ userRole, onLogout }) => {
         }
     };
 
+    // --- 1. SOCKET & DATA EFFECT ---
     useEffect(() => {
         fetchReports();
         fetchTeams(); 
@@ -155,17 +244,23 @@ const Dashboard = ({ userRole, onLogout }) => {
             );
         });
 
+        // --- FIX: LISTEN FOR TEAM CHANGES TO UPDATE CHAT LIST ---
+        socket.on('resource_updated', (update) => {
+            if (update.type === 'team') {
+                console.log("🔄 Teams updated, refreshing chat list...");
+                fetchTeams();
+            }
+        });
+
         // --- LISTEN FOR CHAT MESSAGES ---
         socket.on('receive_message', (data) => {
+            // Admin needs to figure out WHICH team conversation this belongs to
             let teamKey = null;
             
-            if (data.sender === 'Admin') {
-                const parts = data.target_room.split('_');
-                if (parts.length > 1) teamKey = parseInt(parts[1]);
-            } else {
-                const parts = data.target_room.split('_');
-                if (parts.length > 1) teamKey = parseInt(parts[1]);
-            }
+            // If Admin sent it, the target was "team_X"
+            // If Team sent it, the target was also "team_X" (echoed by backend)
+            const parts = data.target_room.split('_');
+            if (parts.length > 1) teamKey = parseInt(parts[1]);
 
             if (teamKey) {
                 setMessages(prev => ({
@@ -183,15 +278,44 @@ const Dashboard = ({ userRole, onLogout }) => {
             socket.off('receive_message');
             socket.off('new_report');
             socket.off('report_updated');
+            socket.off('resource_updated');
             clearInterval(clockInterval);
         };
     }, []);
 
-    // Scroll to bottom of chat
+
+    // --- 2. CLOCK EFFECT (Separated for performance) ---
+    useEffect(() => {
+        const clockInterval = setInterval(() => {
+            setTime(new Date());
+        }, 1000);
+        return () => clearInterval(clockInterval);
+    }, []);
+
+    useEffect(() => {
+        if (selectedChatTeam) {
+            const teamId = selectedChatTeam.id;
+            console.log(`🔄 Fetching history for team_${teamId}...`);
+
+            fetch(`http://127.0.0.1:5000/api/v1/chat/history/team_${teamId}`)
+                .then(res => res.json())
+                .then(history => {
+                    console.log(`📜 Loaded ${history.length} messages for Team ${teamId}`);
+                    setMessages(prev => ({
+                        ...prev,
+                        [teamId]: history // Set the history
+                    }));
+                })
+                .catch(err => console.error("History Fetch Error:", err));
+        }
+    }, [selectedChatTeam]); 
+
+    // AUTO-SCROLL CHAT
     useEffect(() => {
         chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, [messages, selectedChatTeam]);
+    }, [messages, selectedChatTeam])
 
+   
     const handleSendMessage = () => {
         if (!chatMessage.trim() || !selectedChatTeam) return;
 
@@ -199,18 +323,15 @@ const Dashboard = ({ userRole, onLogout }) => {
             sender: 'Admin',
             target_room: `team_${selectedChatTeam.id}`, 
             message: chatMessage,
-            timestamp: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+            timestamp: new Date().toISOString()
         };
 
         socket.emit('send_message', payload);
         
-        setMessages(prev => ({
-            ...prev,
-            [selectedChatTeam.id]: [...(prev[selectedChatTeam.id] || []), payload]
-        }));
-
+        // We rely on the server echo to update local state
         setChatMessage("");
     };
+    // -------------------------------------------------
 
     const handleFileChange = async (event) => {
         const file = event.target.files[0];
@@ -254,6 +375,22 @@ const Dashboard = ({ userRole, onLogout }) => {
         setReportToValidate(reportId);
         setActiveTab('damage_reports');
     };
+
+    const getGroupedReports = () => {
+        const activeReports = reports.filter(r => r.status !== 'Cleared');
+        const groups = { pending: [], active: [] };
+        activeReports.forEach(report => {
+            if (report.status === 'Pending') groups.pending.push(report);
+            else groups.active.push(report);
+        });
+        return {
+            pending: sortReportsByDamage(groups.pending),
+            active: sortReportsByDamage(groups.active)
+        };
+    };
+
+    const groupedReports = getGroupedReports();
+    const totalVisibleReports = groupedReports.pending.length + groupedReports.active.length;
 
     return (
         <div className="flex flex-col h-screen w-full bg-gray-100">
@@ -304,7 +441,6 @@ const Dashboard = ({ userRole, onLogout }) => {
                     {/* VIEW 1: INCIDENTS (FILTERED) */}
                     {activeTab === 'incidents' && (
                         <div className="p-6">
-                            {/* AI Upload Section */}
                             {uploadedFile && (
                                 <div className="mb-6 bg-white border border-gray-200 p-4 rounded-xl shadow-sm flex flex-col gap-3">
                                     <div className="flex items-start gap-4">
@@ -332,67 +468,43 @@ const Dashboard = ({ userRole, onLogout }) => {
                                 </div>
                             )}
 
-                            {/* Map & Log Grid */}
                             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
                                 <div className="lg:col-span-2 bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col h-[700px]">
                                     <h2 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2"><MapIcon className="text-blue-600" /> Live Incident Map</h2>
-                                    {/* PASS ALL REPORTS TO MAP (It filters itself for pins) */}
                                     <div className="flex-1 rounded-lg overflow-hidden border border-gray-300 relative z-0"><IncidentMap reports={reports} /></div>
                                 </div>
-                                <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col h-[600px]">
+
+                                <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col h-[700px]">
                                     <div className="flex justify-between items-center mb-4">
-                                        <div className="flex items-center gap-2">
-                                            <h2 className="text-lg font-semibold text-gray-800">Incident Log</h2>
-                                            {/* UPDATE COUNT TO SHOW ONLY ACTIVE */}
-                                            <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs font-bold border border-gray-200">{activeIncidentLog.length}</span>
-                                        </div>
+                                        <div className="flex items-center gap-2"><h2 className="text-lg font-semibold text-gray-800">Incident Log</h2><span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs font-bold border border-gray-200">{totalVisibleReports}</span></div>
                                         <button onClick={fetchReports} className="text-gray-500 hover:text-blue-600" title="Refresh"><RefreshCw size={16} /></button>
                                     </div>
                                     
-                                    <div className="flex-1 overflow-y-auto pr-2 space-y-3">
-                                        {isLoadingReports ? <div className="text-center text-gray-400 py-4">Loading reports...</div> : activeIncidentLog.length === 0 ? <div className="text-center text-gray-400 py-4">No active incidents.</div> : activeIncidentLog.map((report) => (
-                                            <div key={report.id} onClick={() => toggleReport(report.id)} className={`p-4 rounded-xl border transition-all cursor-pointer group ${expandedReportId === report.id ? "bg-blue-50 border-blue-200 shadow-md" : "bg-white border-gray-100 hover:border-blue-200 hover:shadow-sm"}`}>
-                                                <div className="flex justify-between items-start mb-2">
-                                                    <div className="flex flex-col">
-                                                        <span className="font-bold text-gray-800 text-sm">{report.title}</span>
-                                                        <span className="text-xs text-gray-500 flex items-center gap-1 mt-0.5"><MapIcon size={12} /> {report.location || "Unknown"}</span>
-                                                        <span className="text-[10px] text-gray-400 mt-0.5">{report.timestamp}</span>
-                                                    </div>
-                                                    <StatusBadge status={report.status} />
-                                                </div>
-
-                                                {/* Collapsed View */}
-                                                {expandedReportId !== report.id && (
-                                                    <div className="flex justify-between items-end mt-2">
-                                                        <p className="text-xs text-gray-600 line-clamp-1 w-3/4">{report.description}</p>
-                                                        <ChevronDown size={16} className="text-gray-400 group-hover:text-blue-500 transition-colors" />
-                                                    </div>
-                                                )}
-
-                                                {/* Expanded View */}
-                                                {expandedReportId === report.id && (
-                                                    <div className="mt-3 pt-3 border-t border-blue-100/50 text-sm text-gray-700 space-y-3 animate-in slide-in-from-top-2 duration-200">
-                                                        <div><span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Situation Report</span><p className="text-sm mt-1 leading-relaxed">{report.description}</p></div>
-                                                        <div className="bg-white p-3 rounded-lg border border-gray-200">
-                                                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Exact Location</span>
-                                                            <p className="text-sm font-medium text-gray-800 mt-0.5">{report.location}</p>
-                                                            <div className="flex items-center gap-2 mt-2 text-xs font-mono text-blue-600 bg-blue-50 px-2 py-1 rounded w-fit"><MapIcon size={12} /> {report.latitude?.toFixed(5)}, {report.longitude?.toFixed(5)}</div>
-                                                        </div>
-                                                        <div className="flex justify-center pt-1"><ChevronUp size={16} className="text-blue-400" /></div>
-                                                        
-                                                        {/* VALIDATE BUTTON */}
-                                                        <div className="flex justify-end pt-2">
-                                                            <button 
-                                                                onClick={(e) => { e.stopPropagation(); handleValidateClick(report.id); }} 
-                                                                className="flex items-center gap-2 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-blue-700 transition-colors"
-                                                            >
-                                                                <FileText size={14} /> Validate Report
-                                                            </button>
+                                    <div className="flex-1 overflow-y-auto pr-2 space-y-4">
+                                        {isLoadingReports ? <div className="text-center text-gray-400 py-4">Loading...</div> : totalVisibleReports === 0 ? <div className="text-center text-gray-400 py-4">No active incidents.</div> : (
+                                            <>
+                                                {groupedReports.pending.length > 0 && (
+                                                    <div className="mb-4 animate-in slide-in-from-left duration-300">
+                                                        <div className="flex items-center gap-2 mb-2 text-orange-700 font-bold text-xs uppercase tracking-wider border-b border-orange-100 pb-1"><AlertCircle size={14} /> Pending Validation</div>
+                                                        <div className="space-y-3">
+                                                            {groupedReports.pending.map(report => (
+                                                                <IncidentCard key={report.id} report={report} expandedId={expandedReportId} onToggle={toggleReport} onValidate={handleValidateClick} />
+                                                            ))}
                                                         </div>
                                                     </div>
                                                 )}
-                                            </div>
-                                        ))}
+                                                {groupedReports.active.length > 0 && (
+                                                    <div>
+                                                        <div className="flex items-center gap-2 mb-2 text-blue-700 font-bold text-xs uppercase tracking-wider border-b border-blue-100 pb-1"><Activity size={14} /> Active Incidents</div>
+                                                        <div className="space-y-3">
+                                                            {groupedReports.active.map(report => (
+                                                                <IncidentCard key={report.id} report={report} expandedId={expandedReportId} onToggle={toggleReport} onValidate={handleValidateClick} />
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </>
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -421,9 +533,16 @@ const Dashboard = ({ userRole, onLogout }) => {
                                     <>
                                         <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50"><div><h3 className="font-bold text-gray-800">{selectedChatTeam.name}</h3><p className="text-xs text-gray-500 flex items-center gap-1"><span className={`inline-block w-2 h-2 rounded-full ${selectedChatTeam.status === 'Deployed' ? 'bg-red-500' : 'bg-green-500'}`}></span>{selectedChatTeam.status}</p></div></div>
                                         <div className="flex-1 p-6 overflow-y-auto bg-gray-50/50 space-y-4">
-                                            {messages[selectedChatTeam.id]?.length > 0 ? (
+                                           {messages[selectedChatTeam.id]?.length > 0 ? (
                                                 messages[selectedChatTeam.id].map((msg, index) => (
-                                                    <div key={index} className={`flex ${msg.sender === 'Admin' ? 'justify-end' : 'justify-start'}`}><div className={`max-w-[70%] p-3 rounded-2xl shadow-sm ${msg.sender === 'Admin' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white text-gray-800 border border-gray-200 rounded-bl-none'}`}><p className="text-sm">{msg.message}</p><p className={`text-[10px] mt-1 text-right ${msg.sender === 'Admin' ? 'text-blue-200' : 'text-gray-400'}`}>{msg.timestamp}</p></div></div>
+                                                    <div key={index} className={`flex ${msg.sender === 'Admin' ? 'justify-end' : 'justify-start'}`}>
+                                                        <div className={`max-w-[70%] p-3 rounded-2xl shadow-sm ${msg.sender === 'Admin' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white text-gray-800 border border-gray-200 rounded-bl-none'}`}>
+                                                            {msg.sender !== 'Admin' && <p className="text-[10px] font-bold text-gray-500 mb-1">{msg.sender}</p>}
+                                                            <p className="text-sm">{msg.message}</p>
+                                                            <p className={`text-[10px] mt-1 text-right ${msg.sender === 'Admin' ? 'text-blue-200' : 'text-gray-400'}`}>
+                                                                {new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                                                        </div>
+                                                    </div>
                                                 ))
                                             ) : (
                                                 <div className="flex flex-col items-center justify-center h-full text-gray-400 opacity-50"><MessageSquare size={48} className="mb-2" /><p>Start communication with this unit</p></div>
