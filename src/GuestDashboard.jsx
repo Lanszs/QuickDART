@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Camera, MapPin, AlertTriangle, Send, FileText, XCircle, CheckCircle, ArrowLeft, Activity, Clock, Loader2 } from 'lucide-react';
+import { Camera, MapPin, AlertTriangle, Send, FileText, XCircle, CheckCircle, ArrowLeft, Activity, Clock, Loader2, Search } from 'lucide-react';
 
 const GuestDashboard = ({ onBack }) => {
     const [step, setStep] = useState(1); 
@@ -20,6 +20,11 @@ const GuestDashboard = ({ onBack }) => {
         latitude: null,
         longitude: null
     });
+
+    // --- GEOCODING STATE (NEW) ---
+    const [isSearching, setIsSearching] = useState(false);
+    const [locationSuggestions, setLocationSuggestions] = useState([]);
+    const [selectedAddress, setSelectedAddress] = useState('');
 
     // Clock Timer
     useEffect(() => {
@@ -58,6 +63,7 @@ const GuestDashboard = ({ onBack }) => {
                     if (data && data.display_name) {
                         const address = data.display_name.split(',').slice(0, 4).join(',');
                         setFormData(prev => ({ ...prev, location: address }));
+                        setSelectedAddress(address);
                     } else {
                         setFormData(prev => ({ ...prev, location: `GPS: ${lat.toFixed(5)}, ${lng.toFixed(5)}` }));
                     }
@@ -73,6 +79,48 @@ const GuestDashboard = ({ onBack }) => {
                 setLocating(false);
             }
         );
+    };
+
+    useEffect(() => {
+        // Only search if user is typing and it's not just the placeholder
+        if (!formData.location || formData.location === selectedAddress || formData.location.includes("GPS") || formData.location.includes("Requesting")) {
+            setLocationSuggestions([]);
+            return;
+        }
+
+        const delayDebounceFn = setTimeout(async () => {
+            setIsSearching(true);
+            try {
+                const query = `${formData.location}, Philippines`;
+                const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`);
+                const results = await response.json();
+                setLocationSuggestions(results);
+            } catch (error) {
+                console.error("Geocoding error:", error);
+            } finally {
+                setIsSearching(false);
+            }
+        }, 300); // Wait 500ms after typing stops
+
+        return () => clearTimeout(delayDebounceFn);
+    }, [formData.location]);
+
+    const handleSelectLocation = (location) => {
+        const shortName = location.display_name.split(',')[0];
+
+        setFormData(prev => ({
+            ...prev,
+            location: shortName, // Just show the main name
+            latitude: parseFloat(location.lat),
+            longitude: parseFloat(location.lon)
+        }));
+        setSelectedAddress(shortName);
+        setLocationSuggestions([]); // Hide dropdown
+    };
+
+    const handleLocationInput = (e) => {
+        setFormData({ ...formData, location: e.target.value });
+        setSelectedAddress(''); // <--- UNLOCKS SEARCH (User is typing new stuff)
     };
 
     // --- 1. HANDLE IMAGE UPLOAD & ANALYZE ---
@@ -153,6 +201,8 @@ const GuestDashboard = ({ onBack }) => {
         setPreviewUrl(null);
         setAnalysisResult(null);
         setFormData({ location: '', description: '', latitude: null, longitude: null });
+        setLocationSuggestions([]);
+        setSelectedAddress('')
     };
 
     return (
@@ -254,21 +304,36 @@ const GuestDashboard = ({ onBack }) => {
                                 </div>
 
                                 <div className="p-6 space-y-4">
-                                    <div>
+                                    {/* --- SMART LOCATION INPUT --- */}
+                                    <div className="relative">
                                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Location</label>
-                                        <div className="flex gap-2">
-                                            <div className="flex-1 flex items-center gap-2 border rounded-lg p-3 bg-gray-50 focus-within:bg-white focus-within:ring-2 ring-blue-100 transition-all">
-                                                {locating ? <Loader2 className="animate-spin text-blue-500" size={18} /> : <MapPin className="text-gray-400" size={18} />}
-                                                
-                                                <input 
-                                                    type="text" 
-                                                    placeholder={locating ? "Asking permission..." : "Enter location manually"}
-                                                    className="bg-transparent outline-none w-full text-sm font-medium"
-                                                    value={formData.location}
-                                                    onChange={(e) => setFormData({...formData, location: e.target.value})}
-                                                />
-                                            </div>
+                                        <div className="flex items-center gap-2 border rounded-lg p-3 bg-gray-50 focus-within:bg-white focus-within:ring-2 ring-blue-100 transition-all">
+                                            {isSearching || locating ? <Loader2 className="animate-spin text-blue-500" size={18} /> : <Search className="text-gray-400" size={18} />}
+                                            
+                                            <input 
+                                                type="text" 
+                                                placeholder={locating ? "Requesting GPS..." : "Type address or landmark..."}
+                                                className="bg-transparent outline-none w-full text-sm font-medium"
+                                                value={formData.location}
+                                                onChange={handleLocationInput}
+                                            />
                                         </div>
+
+                                        {/* DROPDOWN SUGGESTIONS */}
+                                        {locationSuggestions.length > 0 && (
+                                            <div className="absolute top-full left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-xl z-50 max-h-40 overflow-y-auto mt-1">
+                                                {locationSuggestions.map((loc, index) => (
+                                                    <div 
+                                                        key={index} 
+                                                        onClick={() => handleSelectLocation(loc)}
+                                                        className="p-2.5 text-xs hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0 flex items-center gap-2"
+                                                    >
+                                                        <MapPin size={12} className="text-gray-400"/>
+                                                        {loc.display_name}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
 
                                     <div>

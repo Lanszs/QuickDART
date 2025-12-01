@@ -172,6 +172,7 @@ def deploy_team(team_id):
         
         new_status = data.get('status')
         new_task = data.get('task', '') # <--- NEW: Extract the task message
+        new_report_id = data.get('report_id')
         
         print(f"📝 New status: {new_status}")
         print(f"📋 Task Orders: {new_task}")
@@ -186,8 +187,10 @@ def deploy_team(team_id):
         # --- NEW LOGIC: Update the Task ---
         if new_status == 'Deployed':
             team.current_task = new_task  # Save the orders
+            team.current_report_id = new_report_id
         else:
             team.current_task = None      # Clear orders if recalled/resting
+            team.current_report_id = None
         # ----------------------------------
         
         session.commit()

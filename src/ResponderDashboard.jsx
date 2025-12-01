@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Camera, MapPin, CheckCircle, User, LogOut, Activity, FileText, Clock, AlertCircle, ChevronRight, XCircle, ImageIcon, MessageSquare, Send, Zap, Coffee, Truck, Radio, Package, Heart, Shield, AlertTriangle, Calendar, CheckSquare, Plus, Trash2, Wrench } from 'lucide-react';
+import { Camera, MapPin, CheckCircle, User, LogOut, Activity, 
+    FileText, Clock, AlertCircle, ChevronRight, XCircle, ImageIcon, 
+    MessageSquare, Send, Zap, Coffee, Truck, Radio, Package, Heart, Shield, 
+    AlertTriangle, Calendar, CheckSquare, Plus, Trash2, Wrench, History, Archive, Square, Users } from 'lucide-react';
 import { io } from 'socket.io-client';
 import { toast } from 'react-toastify';
 
@@ -8,6 +11,7 @@ const socket = io('http://127.0.0.1:5000');
 
 const ResponderDashboard = ({ onLogout }) => {
     const [activeTab, setActiveTab] = useState('tasks'); 
+    const [incidentTab, setIncidentTab] = useState('active');
 
     // --- USER IDENTITY STATE ---
     const [currentTeamId, setCurrentTeamId] = useState(() => {
@@ -25,9 +29,11 @@ const ResponderDashboard = ({ onLogout }) => {
     const [showTaskModal, setShowTaskModal] = useState(false);
     const [selectedAssets, setSelectedAssets] = useState([]); 
     const [showConfirmModal, setShowConfirmModal] = useState(false);
+    const [deployedPersonnel, setDeployedPersonnel] = useState(0);
 
     const [showAddAssetModal, setShowAddAssetModal] = useState(false);
     const [newAsset, setNewAsset] = useState({ name: '', type: 'Vehicle' });
+    const [inventorySelection, setInventorySelection] = useState([]);
 
     // --- HISTORY MODAL STATE ---
     const [selectedHistory, setSelectedHistory] = useState(null);
@@ -185,6 +191,7 @@ const ResponderDashboard = ({ onLogout }) => {
     const openTaskModal = (task) => {
         setSelectedTask(task);
         setSelectedAssets([]); 
+        setDeployedPersonnel(myTeam?.personnel_count || 0);
         setShowTaskModal(true);
     };
 
@@ -212,7 +219,8 @@ const ResponderDashboard = ({ onLogout }) => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
                     status: 'Deployed', 
-                    task: selectedTask.title 
+                    task: selectedTask.title,
+                    report_id: selectedTask.id
                 })
             });
 
@@ -241,28 +249,48 @@ const ResponderDashboard = ({ onLogout }) => {
     // --- 2. COMPLETE MISSION (UPDATED) ---
     const handleCompleteMission = async () => {
         if (!myTeam || !selectedTask) return;
-        if(!window.confirm("Mark mission as COMPLETE? This will clear the incident and set unit to Idle.")) return;
+        if(!window.confirm("Mark mission as COMPLETE? This will clear the incident, return assets to base, and notify HQ.")) return;
 
         try {
             // 1. Set Team back to Idle
             await fetch(`http://127.0.0.1:5000/api/v1/teams/${myTeam.id}/deploy`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: 'Idle', task: "" })
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'Idle', task: "", report_id: null })
             });
 
-            // 2. Set Report Status to 'Cleared' (Removes it from My Tasks)
+            // 2. Set Report Status to 'Cleared'
             await fetch(`http://127.0.0.1:5000/api/v1/reports/${selectedTask.id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: 'Cleared' })
             });
 
-            toast.success("Mission Completed. Incident Cleared.");
+            // 3. Reset Deployed Assets to 'Available'
+            if (myTeam.assets) {
+                const assetsToReset = myTeam.assets.filter(a => a.status === 'Deployed');
+                await Promise.all(assetsToReset.map(asset => 
+                    fetch(`http://127.0.0.1:5000/api/v1/assets/${asset.id}/deploy`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ status: 'Available', location: 'Base' })
+                    })
+                ));
+            }
+
+            // 4. Notify Admin via Chat
+            const payload = {
+                sender: myTeam.name, 
+                target_room: `team_${currentTeamId}`, 
+                message: `✅ MISSION COMPLETE: "${selectedTask.title}" has been cleared. All assets returning to base.`,
+                timestamp: new Date().toISOString()
+            };
+            socket.emit('send_message', payload);
+
+            toast.success("Mission Completed. Assets Returned. HQ Notified.");
             setShowTaskModal(false);
-            fetchData(); // Refresh lists
-        } catch (error) {
-            console.error("Error completing mission:", error);
+            fetchData(); 
+        } catch (error) { 
+            console.error("Error completing mission:", error); 
+            toast.error("Failed to complete mission sequence.");
         }
     };
 
@@ -285,10 +313,29 @@ const ResponderDashboard = ({ onLogout }) => {
     
     const getStatusColor = (status) => {
         switch (status) {
-            case 'Critical': return 'text-red-600 bg-red-50 border-red-200';
             case 'Active': return 'text-blue-600 bg-blue-50 border-blue-200';
             case 'Cleared': return 'text-green-600 bg-green-50 border-green-200';
             default: return 'text-gray-600 bg-gray-50 border-gray-200';
+        }
+    };
+
+    const damageOrder = ['Destroyed', 'Major', 'Minor', 'No Damage'];
+
+    const toggleInventoryItem = (assetId) => {
+        setInventorySelection(prev => 
+            prev.includes(assetId) 
+                ? prev.filter(id => id !== assetId) 
+                : [...prev, assetId]
+        );
+    };
+
+    // Select All / Deselect All
+    const toggleSelectAll = () => {
+        if (!myTeam?.assets) return;
+        if (inventorySelection.length === myTeam.assets.length) {
+            setInventorySelection([]); // Deselect all
+        } else {
+            setInventorySelection(myTeam.assets.map(a => a.id)); // Select all
         }
     };
 
@@ -319,11 +366,48 @@ const ResponderDashboard = ({ onLogout }) => {
         }
     };
 
+    const handleBulkDeleteAssets = async () => {
+        if (inventorySelection.length === 0) return;
+        if (!window.confirm(`Are you sure you want to remove ${inventorySelection.length} assets?`)) return;
+
+        try {
+            // Loop through selected IDs and delete them one by one
+            // (Ideally backend should support bulk delete, but this works for now)
+            const deletePromises = inventorySelection.map(id => 
+                fetch(`http://127.0.0.1:5000/api/v1/assets/${id}`, { method: 'DELETE' })
+            );
+
+            await Promise.all(deletePromises);
+            
+            toast.success(`${inventorySelection.length} Assets Removed`);
+            setInventorySelection([]); // Clear selection
+            fetchData();
+        } catch (error) {
+            console.error("Bulk delete error:", error);
+            toast.error("Failed to delete some assets");
+        }
+    };
+
     // --- UPDATED FILTER: Only show Active/Critical tasks (Hide Pending & Cleared) ---
     const myTasks = reports.filter(r => r.status === 'Active' || r.status === 'Critical');
+    const clearedReports = reports.filter(r => r.status === 'Cleared');
+
+    const getGroupedClearedReports = () => {
+        const groups = {};
+        clearedReports.forEach(report => {
+            const date = new Date(report.timestamp).toLocaleDateString(undefined, {
+                year: 'numeric', month: 'long', day: 'numeric'
+            });
+            if (!groups[date]) groups[date] = [];
+            groups[date].push(report);
+        });
+        return groups;
+    };
+    const groupedCleared = getGroupedClearedReports();
+    const sortedDates = Object.keys(groupedCleared).sort((a, b) => new Date(b) - new Date(a)); // Newest dates first
 
     const isRespondingToThis = (task) => {
-        return myTeam?.status === 'Deployed' && myTeam?.current_task === task.title;
+        return myTeam?.status === 'Deployed' && myTeam?.current_report_id === task.id;
     };
 
     const updateMyStatus = async (newStatus) => {
@@ -343,7 +427,7 @@ const ResponderDashboard = ({ onLogout }) => {
             <header className="bg-gray-900 text-white p-4 shadow-md flex justify-between items-center">
                 <h1 className="text-xl font-bold flex items-center gap-2">
                     <Activity className="h-6 w-6 text-red-500" />
-                    Field Response Unit
+                    {myTeam ? myTeam.name : "Field Response Unit"}
                 </h1>
                 <div className="flex items-center gap-6">
                     <div className="flex items-center gap-3 bg-gray-800 px-4 py-2 rounded-lg">
@@ -379,7 +463,7 @@ const ResponderDashboard = ({ onLogout }) => {
                     </div>
                     <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
                         <div className="bg-blue-100 p-2 rounded-full"><User size={16} className="text-blue-700" /></div>
-                        <div><p className="text-sm font-bold text-gray-700">{myTeam ? `${myTeam.department} Agent` : "Loading..."}</p><p className="text-xs text-gray-500">{myTeam?.name}</p></div>
+                        <div><p className="text-sm font-bold text-gray-700">{myTeam ? `${myTeam.department}` : "Loading..."}</p><p className="text-xs text-gray-500">{myTeam?.name}</p></div>
                     </div>
                 </nav>
 
@@ -403,66 +487,129 @@ const ResponderDashboard = ({ onLogout }) => {
                                     <p className="text-sm">Area is clear or waiting for admin validation.</p>
                                 </div>
                             ) : (
-                                <div className="grid grid-cols-1 gap-4">
-                                    {myTasks.map(task => (
-                                        <div 
-                                            key={task.id}
-                                            onClick={() => openTaskModal(task)}
-                                            className={`bg-white p-5 rounded-xl shadow-sm border transition-all cursor-pointer hover:shadow-md group
-                                                ${isRespondingToThis(task) ? 'border-green-500 ring-2 ring-green-500 bg-green-50' : 'border-gray-200 hover:border-blue-400'}
-                                            `}
-                                        >
-                                            <div className="flex justify-between items-start">
-                                                <div className="flex items-start gap-4">
-                                                    <div className={`p-3 rounded-lg ${task.status === 'Critical' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>
-                                                        <AlertCircle size={24} />
-                                                    </div>
-                                                    <div>
-                                                        <h3 className="font-bold text-gray-800 text-lg group-hover:text-blue-600 transition-colors">{task.title}</h3>
-                                                        <p className="text-sm text-gray-500 mt-1 flex items-center gap-3">
-                                                            <span className="flex items-center gap-1"><MapPin size={14}/> {task.location}</span>
-                                                            <span className="flex items-center gap-1"><Clock size={14}/> {new Date(task.timestamp).toLocaleTimeString()}</span>
-                                                        </p>
-                                                        {isRespondingToThis(task) && (
-                                                            <div className="mt-2 flex items-center gap-2 text-green-700 font-bold text-xs bg-green-100 px-2 py-1 rounded w-fit animate-pulse">
-                                                                <Activity size={12} /> CURRENTLY RESPONDING
-                                                            </div>
-                                                        )}
-                                                    </div>
+                                <div className="space-y-6">
+                                    {damageOrder.map(level => {
+                                        const tasksInLevel = myTasks.filter(t => t.damage_level === level);
+                                        if (tasksInLevel.length === 0) return null;
+
+                                        return (
+                                            <div key={level} className="animate-in slide-in-from-left duration-300">
+                                                {/* Header */}
+                                                <div className={`flex items-center gap-2 mb-3 border-b-2 pb-1 ${
+                                                    level === 'Destroyed' ? 'border-red-500 text-red-700' :
+                                                    level === 'Major' ? 'border-orange-500 text-orange-700' :
+                                                    level === 'Minor' ? 'border-yellow-500 text-yellow-700' :
+                                                    'border-gray-300 text-gray-600'
+                                                }`}>
+                                                    <AlertTriangle size={20} />
+                                                    <h3 className="text-lg font-bold uppercase tracking-wide">{level} Priority</h3>
+                                                    <span className="bg-white border px-2 rounded text-xs font-mono ml-auto text-gray-500">{tasksInLevel.length}</span>
                                                 </div>
-                                                
-                                                <div className="flex flex-col items-end gap-2">
-                                                    <ChevronRight className="text-gray-300 group-hover:text-blue-500" />
-                                                    <div className={`px-3 py-1 rounded-full text-xs font-bold border ${getDamageColor(task.damage_level)}`}>
-                                                        {task.damage_level}
-                                                    </div>
+
+                                                {/* Grid */}
+                                                <div className="grid grid-cols-1 gap-3">
+                                                    {tasksInLevel.map(task => (
+                                                        <div 
+                                                            key={task.id}
+                                                            onClick={() => openTaskModal(task)}
+                                                            className={`bg-white p-5 rounded-xl shadow-sm border transition-all cursor-pointer hover:shadow-md group relative overflow-hidden
+                                                                ${isRespondingToThis(task) ? 'border-green-500 ring-2 ring-green-500 bg-green-50' : 'border-gray-200 hover:border-blue-400'}
+                                                            `}
+                                                        >
+                                                            <div className="flex justify-between items-start relative z-10">
+                                                                <div className="flex items-start gap-4">
+                                                                    <div className={`p-3 rounded-lg ${task.status === 'Critical' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>
+                                                                        <AlertCircle size={24} />
+                                                                    </div>
+                                                                    <div>
+                                                                        <h3 className="font-bold text-gray-800 text-lg group-hover:text-blue-600 transition-colors">
+                                                                            {task.title}
+                                                                        </h3>
+                                                                        <p className="text-sm text-gray-500 mt-1 flex items-center gap-3">
+                                                                            <span className="flex items-center gap-1"><MapPin size={14}/> {task.location}</span>
+                                                                            <span className="flex items-center gap-1"><Clock size={14}/> {new Date(task.timestamp).toLocaleTimeString()}</span>
+                                                                        </p>
+                                                                        
+                                                                        {isRespondingToThis(task) && (
+                                                                            <div className="mt-2 flex items-center gap-2 text-green-700 font-bold text-xs bg-green-100 px-2 py-1 rounded w-fit animate-pulse">
+                                                                                <Activity size={12} /> CURRENTLY RESPONDING
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                                
+                                                                <ChevronRight className="text-gray-300 group-hover:text-blue-500" />
+                                                            </div>
+                                                        </div>
+                                                    ))}
                                                 </div>
                                             </div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>
                     )}
 
-                    {/* --- TAB: INVENTORY (NEW) --- */}
+                    {/* --- INVENTORY TAB (UPDATED) --- */}
                     {activeTab === 'inventory' && (
                         <div className="max-w-4xl mx-auto">
                             <div className="flex items-center justify-between mb-6">
-                                <h2 className="text-2xl font-bold text-gray-800">Unit Inventory</h2>
-                                <button onClick={() => setShowAddAssetModal(true)} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm"><Plus size={16} /> Add Asset</button>
+                                <div className="flex items-center gap-3">
+                                    <h2 className="text-2xl font-bold text-gray-800">Unit Inventory</h2>
+                                    {inventorySelection.length > 0 && (
+                                        <button 
+                                            onClick={handleBulkDeleteAssets} 
+                                            className="bg-red-50 text-red-600 px-3 py-1 rounded-full text-xs font-bold border border-red-200 flex items-center gap-1 animate-in fade-in"
+                                        >
+                                            <Trash2 size={12}/> Remove {inventorySelection.length} Selected
+                                        </button>
+                                    )}
+                                </div>
+                                <div className="flex gap-2">
+                                    <button 
+                                        onClick={toggleSelectAll} 
+                                        className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 text-xs font-bold"
+                                    >
+                                        {inventorySelection.length === myTeam?.assets.length ? <CheckSquare size={16}/> : <Square size={16}/>} 
+                                        {inventorySelection.length === myTeam?.assets.length ? "Deselect All" : "Select All"}
+                                    </button>
+                                    <button onClick={() => setShowAddAssetModal(true)} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm">
+                                        <Plus size={16} /> Add Asset
+                                    </button>
+                                </div>
                             </div>
+
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 {myTeam?.assets && myTeam.assets.length > 0 ? (
-                                    myTeam.assets.map(asset => (
-                                        <div key={asset.id} className="bg-white p-4 rounded-xl border border-gray-200 flex items-center justify-between">
-                                            <div className="flex items-center gap-3">
-                                                <div className="p-2 bg-gray-100 rounded-lg">{getAssetIcon(asset.type)}</div>
-                                                <div><p className="font-bold text-gray-800">{asset.name}</p><p className="text-xs text-gray-500">{asset.type}</p></div>
+                                    myTeam.assets.map(asset => {
+                                        const isSelected = inventorySelection.includes(asset.id);
+                                        return (
+                                            <div 
+                                                key={asset.id} 
+                                                onClick={() => toggleInventoryItem(asset.id)}
+                                                className={`p-4 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
+                                                    isSelected 
+                                                    ? 'bg-blue-50 border-blue-500 ring-1 ring-blue-500' 
+                                                    : 'bg-white border-gray-200 hover:border-blue-300'
+                                                }`}
+                                            >
+                                                <div className="flex items-center gap-3">
+                                                    {/* Selection Checkbox Indicator */}
+                                                    <div className={`w-5 h-5 rounded border flex items-center justify-center ${isSelected ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-white'}`}>
+                                                        {isSelected && <CheckSquare size={14} className="text-white" />}
+                                                    </div>
+                                                    
+                                                    <div className="p-2 bg-gray-100 rounded-lg">{getAssetIcon(asset.type)}</div>
+                                                    <div>
+                                                        <p className="font-bold text-gray-800">{asset.name}</p>
+                                                        <p className="text-xs text-gray-500">{asset.type}</p>
+                                                    </div>
+                                                </div>
+                                                <span className={`px-2 py-1 rounded text-xs font-bold ${asset.status === 'Deployed' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{asset.status}</span>
                                             </div>
-                                            <span className={`px-2 py-1 rounded text-xs font-bold ${asset.status === 'Deployed' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{asset.status}</span>
-                                        </div>
-                                    ))
+                                        );
+                                    })
                                 ) : <p className="text-gray-400 col-span-2 text-center">No assets assigned.</p>}
                             </div>
                         </div>
@@ -516,32 +663,82 @@ const ResponderDashboard = ({ onLogout }) => {
                         </div>
                     )}
 
-                    {/* --- TAB: INCIDENT LOG (RESTORED CLICKABLE CARDS) --- */}
+                    {/* --- TAB: INCIDENT LOG (UPDATED WITH SUB-TABS) --- */}
                     {activeTab === 'incidents' && (
                         <div className="max-w-4xl mx-auto">
-                            <h2 className="text-2xl font-bold text-gray-800 mb-6">Operational History</h2>
-                            <div className="space-y-4">
-                                {reports.map(report => (
-                                    <div 
-                                        key={report.id} 
-                                        onClick={() => openHistoryModal(report)}
-                                        className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm cursor-pointer hover:border-blue-300 hover:shadow-md transition-all group"
+                            <div className="flex items-center justify-between mb-6">
+                                <h2 className="text-2xl font-bold text-gray-800">Operational History</h2>
+                                
+                                {/* SUB-TAB SWITCHER */}
+                                <div className="flex bg-gray-200 p-1 rounded-lg">
+                                    <button 
+                                        onClick={() => setIncidentTab('active')}
+                                        className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${incidentTab === 'active' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
                                     >
-                                        <div className="flex justify-between items-center">
-                                            <div>
-                                                <h3 className="font-bold text-gray-800 group-hover:text-blue-600 transition-colors">{report.title}</h3>
-                                                <div className="flex items-center gap-4 mt-1 text-xs text-gray-500">
-                                                    <span className="flex items-center gap-1"><MapPin size={12} /> {report.location}</span>
-                                                    <span className="flex items-center gap-1"><Calendar size={12} /> {new Date(report.timestamp).toLocaleDateString()}</span>
+                                        Active ({myTasks.length})
+                                    </button>
+                                    <button 
+                                        onClick={() => setIncidentTab('history')}
+                                        className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${incidentTab === 'history' ? 'bg-white text-green-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                                    >
+                                        Cleared ({clearedReports.length})
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* ACTIVE REPORTS LIST */}
+                            {incidentTab === 'active' && (
+                                <div className="space-y-4 animate-in slide-in-from-left duration-300">
+                                    {myTasks.length === 0 ? (
+                                        <div className="text-center text-gray-400 py-8 bg-white rounded-xl border border-dashed">No active operations.</div>
+                                    ) : (
+                                        myTasks.map(report => (
+                                            <div key={report.id} onClick={() => openHistoryModal(report)} className="bg-white p-4 rounded-xl border border-blue-100 shadow-sm cursor-pointer hover:shadow-md hover:border-blue-300 transition-all group flex justify-between items-center">
+                                                <div>
+                                                    <h3 className="font-bold text-gray-800 group-hover:text-blue-600 transition-colors">{report.title}</h3>
+                                                    <div className="flex items-center gap-4 mt-1 text-xs text-gray-500">
+                                                        <span className="flex items-center gap-1"><MapPin size={12} /> {report.location}</span>
+                                                        <span className="flex items-center gap-1"><Clock size={12} /> {new Date(report.timestamp).toLocaleTimeString()}</span>
+                                                    </div>
+                                                </div>
+                                                <div className={`px-2 py-0.5 rounded text-[10px] font-bold border ${getStatusColor(report.status)}`}>{report.status}</div>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            )}
+
+                            {/* CLEARED HISTORY LIST (Grouped by Date) */}
+                            {incidentTab === 'history' && (
+                                <div className="animate-in slide-in-from-right duration-300">
+                                    {sortedDates.length === 0 ? (
+                                        <div className="text-center text-gray-400 py-8 bg-white rounded-xl border border-dashed">No cleared incidents yet.</div>
+                                    ) : (
+                                        sortedDates.map(date => (
+                                            <div key={date} className="mb-6">
+                                                <div className="flex items-center gap-2 mb-3 text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">
+                                                    <Calendar size={12}/> {date}
+                                                </div>
+                                                <div className="grid gap-3">
+                                                    {groupedCleared[date].map(report => (
+                                                        <div key={report.id} onClick={() => openHistoryModal(report)} className="bg-gray-50 p-4 rounded-xl border border-gray-200 cursor-pointer hover:bg-white hover:shadow-md hover:border-green-300 transition-all group flex justify-between items-center opacity-80 hover:opacity-100">
+                                                            <div>
+                                                                <h3 className="font-bold text-gray-700 group-hover:text-green-700 transition-colors">{report.title}</h3>
+                                                                <div className="flex items-center gap-4 mt-1 text-xs text-gray-500">
+                                                                    <span className="flex items-center gap-1"><MapPin size={12} /> {report.location}</span>
+                                                                    <span className="flex items-center gap-1"><Clock size={12} /> {new Date(report.timestamp).toLocaleTimeString()}</span>
+                                                                </div>
+                                                            </div>
+                                                            <div className="px-2 py-0.5 rounded text-[10px] font-bold border bg-green-100 text-green-700 border-green-200">CLEARED</div>
+                                                        </div>
+                                                    ))}
                                                 </div>
                                             </div>
-                                            <div className={`px-2 py-0.5 rounded text-[10px] font-bold border ${getStatusColor(report.status)}`}>
-                                                {report.status}
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            )}
+
                         </div>
                     )}
 
@@ -584,19 +781,29 @@ const ResponderDashboard = ({ onLogout }) => {
                             </div>
 
                             {!isRespondingToThis(selectedTask) && (
-                                <div className="mb-6">
-                                    <p className="text-sm font-bold text-gray-800 mb-2 flex items-center gap-2"><Truck size={16} className="text-gray-500"/> Select Assets for Response</p>
-                                    <div className="grid grid-cols-2 gap-2">
-                                        {myTeam?.assets && myTeam.assets.filter(a => a.status === 'Available').length > 0 ? (
-                                            myTeam.assets.filter(a => a.status === 'Available').map(asset => (
-                                                <div key={asset.id} onClick={() => toggleAssetSelection(asset.id)} className={`p-3 rounded-lg border cursor-pointer flex items-center justify-between transition-all ${selectedAssets.includes(asset.id) ? 'bg-blue-50 border-blue-500 ring-1 ring-blue-500' : 'bg-white border-gray-200 hover:border-blue-300'}`}>
-                                                    <div className="flex items-center gap-2"><div className="text-gray-500">{getAssetIcon(asset.type)}</div><span className="text-sm font-medium text-gray-700">{asset.name}</span></div>
-                                                    {selectedAssets.includes(asset.id) && <CheckCircle size={16} className="text-blue-600" />}
-                                                </div>
-                                            ))
-                                        ) : <p className="text-sm text-gray-400 italic col-span-2">No available assets at this time.</p>}
+                                <>
+                                    {/* --- NEW: PERSONNEL COUNT INPUT --- */}
+                                    <div className="mb-6 bg-gray-50 p-4 rounded-xl border border-gray-200">
+                                        <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
+                                            <Users size={16} className="text-gray-500"/> Personnel Deploying
+                                        </label>
+                                        <input 
+                                            type="number" 
+                                            className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono text-lg"
+                                            value={deployedPersonnel}
+                                            onChange={(e) => setDeployedPersonnel(e.target.value)}
+                                            placeholder="Enter count..."
+                                            min="1"
+                                            max={myTeam?.personnel_count || 99}
+                                        />
+                                        <p className="text-xs text-gray-400 mt-1 text-right">Total Available: {myTeam?.personnel_count || 0}</p>
                                     </div>
-                                </div>
+
+                                    <div className="mb-6">
+                                        <p className="text-sm font-bold text-gray-800 mb-2 flex items-center gap-2"><Truck size={16} className="text-gray-500"/> Select Assets for Response</p>
+                                        <div className="grid grid-cols-2 gap-2">{myTeam?.assets && myTeam.assets.filter(a => a.status === 'Available').length > 0 ? (myTeam.assets.filter(a => a.status === 'Available').map(asset => (<div key={asset.id} onClick={() => toggleAssetSelection(asset.id)} className={`p-3 rounded-lg border cursor-pointer flex items-center justify-between transition-all ${selectedAssets.includes(asset.id) ? 'bg-blue-50 border-blue-500 ring-1 ring-blue-500' : 'bg-white border-gray-200 hover:border-blue-300'}`}><div className="flex items-center gap-2"><div className="text-gray-500">{getAssetIcon(asset.type)}</div><span className="text-sm font-medium text-gray-700">{asset.name}</span></div>{selectedAssets.includes(asset.id) && <CheckCircle size={16} className="text-blue-600" />}</div>))) : <p className="text-sm text-gray-400 italic col-span-2">No available assets at this time.</p>}</div>
+                                    </div>
+                                </>
                             )}
                         </div>
 

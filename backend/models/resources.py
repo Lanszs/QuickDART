@@ -33,6 +33,7 @@ class Team(Base):
     status = Column(String, default="Idle") # Idle, Deployed, Resting
     personnel_count = Column(Integer, default=0)
     current_task = Column(String, nullable=True) # <--- NEW FIELD
+    current_report_id = Column(Integer, nullable=True)
 
     # --- NEW: LOCATION & AREA OF RESPONSIBILITY ---
     base_latitude = Column(Float, nullable=True)  # Where the team is stationed
@@ -50,6 +51,7 @@ class Team(Base):
             "status": self.status,
             "personnel_count": self.personnel_count,
             "current_task": self.current_task, # <--- Include in API response
+            "current_report_id": self.current_report_id,
             "base_latitude": self.base_latitude,    # Return lat
             "base_longitude": self.base_longitude,  # Return lng
             "coverage_radius_km": self.coverage_radius_km,
