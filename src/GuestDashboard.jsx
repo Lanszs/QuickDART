@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Camera, MapPin, AlertTriangle, Send, FileText, XCircle, CheckCircle, ArrowLeft, Activity, Clock, Loader2, Search } from 'lucide-react';
+import { Camera, MapPin, AlertTriangle, Send, FileText, XCircle, CheckCircle, ArrowLeft, Activity, Clock, Loader2, Search, AlertCircle } from 'lucide-react';
 
 const GuestDashboard = ({ onBack }) => {
     const [step, setStep] = useState(1); 
@@ -13,6 +13,14 @@ const GuestDashboard = ({ onBack }) => {
     const [previewUrl, setPreviewUrl] = useState(null);
     const [analysisResult, setAnalysisResult] = useState(null);
     
+    // --- GEOCODING STATE ---
+    const [isSearching, setIsSearching] = useState(false);
+    const [locationSuggestions, setLocationSuggestions] = useState([]);
+    const [selectedAddress, setSelectedAddress] = useState(''); 
+    
+    // --- VALIDATION STATE ---
+    const [locationError, setLocationError] = useState(false); // <--- NEW: Tracks validation error
+
     // Form State
     const [formData, setFormData] = useState({
         location: '', 
@@ -20,11 +28,6 @@ const GuestDashboard = ({ onBack }) => {
         latitude: null,
         longitude: null
     });
-
-    // --- GEOCODING STATE (NEW) ---
-    const [isSearching, setIsSearching] = useState(false);
-    const [locationSuggestions, setLocationSuggestions] = useState([]);
-    const [selectedAddress, setSelectedAddress] = useState('');
 
     // Clock Timer
     useEffect(() => {
@@ -44,6 +47,7 @@ const GuestDashboard = ({ onBack }) => {
 
         setLocating(true);
         setFormData(prev => ({ ...prev, location: "📍 Requesting permission..." }));
+        setLocationError(false); // Clear error if we are auto-detecting
 
         navigator.geolocation.getCurrentPosition(
             async (position) => {
@@ -81,8 +85,8 @@ const GuestDashboard = ({ onBack }) => {
         );
     };
 
+    // --- SMART SEARCH LOGIC ---
     useEffect(() => {
-        // Only search if user is typing and it's not just the placeholder
         if (!formData.location || formData.location === selectedAddress || formData.location.includes("GPS") || formData.location.includes("Requesting")) {
             setLocationSuggestions([]);
             return;
@@ -100,27 +104,32 @@ const GuestDashboard = ({ onBack }) => {
             } finally {
                 setIsSearching(false);
             }
-        }, 300); // Wait 500ms after typing stops
+        }, 300);
 
         return () => clearTimeout(delayDebounceFn);
-    }, [formData.location]);
+    }, [formData.location, selectedAddress]);
 
     const handleSelectLocation = (location) => {
-        const shortName = location.display_name.split(',')[0];
-
+        const shortName = location.display_name.split(',')[0]; 
+        
         setFormData(prev => ({
             ...prev,
-            location: shortName, // Just show the main name
+            location: shortName,
             latitude: parseFloat(location.lat),
             longitude: parseFloat(location.lon)
         }));
+        
         setSelectedAddress(shortName);
-        setLocationSuggestions([]); // Hide dropdown
+        setLocationSuggestions([]);   
+        setLocationError(false); // Clear error on select
     };
 
     const handleLocationInput = (e) => {
         setFormData({ ...formData, location: e.target.value });
-        setSelectedAddress(''); // <--- UNLOCKS SEARCH (User is typing new stuff)
+        setSelectedAddress(''); 
+        if (e.target.value.trim() !== '') {
+            setLocationError(false); // Clear error if user starts typing
+        }
     };
 
     // --- 1. HANDLE IMAGE UPLOAD & ANALYZE ---
@@ -159,16 +168,24 @@ const GuestDashboard = ({ onBack }) => {
         }
     };
 
-    // --- 3. SUBMIT REPORT ---
+    // --- 3. SUBMIT REPORT (WITH VALIDATION) ---
     const handleSubmit = async () => {
         if (!analysisResult) return;
+
+        // --- VALIDATION CHECK ---
+        if (!formData.location.trim() || formData.location.includes("Requesting")) {
+            setLocationError(true);
+            return; // STOP HERE if location is invalid
+        }
+        // ------------------------
+
         setSubmitting(true);
 
         const newReport = {
             title: `Public Report: ${analysisResult.type}`,
-            description: formData.description || `AI Detected ${analysisResult.damage} damage.`,
+            description: formData.description || `AI Detected ${analysisResult.damage}.`,
             status: 'Pending',
-            location: formData.location || 'Unknown Location',
+            location: formData.location, // Must be valid now
             latitude: formData.latitude || 14.7546, 
             longitude: formData.longitude || 120.9466,
             damage_level: analysisResult.damage,
@@ -202,56 +219,48 @@ const GuestDashboard = ({ onBack }) => {
         setAnalysisResult(null);
         setFormData({ location: '', description: '', latitude: null, longitude: null });
         setLocationSuggestions([]);
-        setSelectedAddress('')
+        setSelectedAddress('');
+        setLocationError(false);
+    };
+
+    const getDamageText = (text) => {
+        if (!text) return "Unknown";
+        if (text.toLowerCase().includes('damage')) {
+            return `${text} Detected`; 
+        }
+        return `${text} Damage Detected`;
     };
 
     return (
         <div className="min-h-screen bg-gray-50 flex flex-col">
             
-            {/* --- TOP NAVIGATION BAR --- */}
             <header className="bg-white shadow-sm px-4 py-3 flex justify-between items-center sticky top-0 z-50">
-                {/* LEFT: Back Button */}
-                <button 
-                    onClick={onBack}
-                    className="flex items-center gap-2 text-gray-600 hover:text-gray-900 font-bold transition-colors bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-lg"
-                >
+                <button onClick={onBack} className="flex items-center gap-2 text-gray-600 hover:text-gray-900 font-bold transition-colors bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-lg">
                     <ArrowLeft size={20} />
-                    <span className="hidden sm:inline">Back</span>
+                    <span className="hidden sm:inline">Exit</span>
                 </button>
-
-                {/* CENTER: Logo/Title */}
                 <div className="flex items-center gap-2">
                     <Activity className="text-blue-600" size={24} />
                     <span className="font-extrabold text-lg tracking-tight text-gray-800 hidden xs:inline">
                         QuickDART <span className="text-blue-600">Public</span>
                     </span>
                 </div>
-
-                {/* RIGHT: Clock (Matches Admin Dashboard Style) */}
                 <div className="flex items-center gap-3 bg-slate-100 px-4 py-1.5 rounded-lg border border-slate-200">
                     <Clock size={18} className="text-blue-600" />
                     <div className="flex flex-col leading-tight text-right">
-                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                            {time.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
-                        </span>
-                        <span className="text-sm font-bold font-mono text-slate-900">
-                            {time.toLocaleTimeString()}
-                        </span>
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{time.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+                        <span className="text-sm font-bold font-mono text-slate-900">{time.toLocaleTimeString()}</span>
                     </div>
                 </div>
             </header>
 
-            {/* --- MAIN CONTENT --- */}
             <main className="flex-grow flex flex-col items-center p-6">
                 <div className="w-full max-w-md space-y-6">
 
-                    {/* Intro Text (Only on Step 1) */}
                     {step === 1 && (
                         <div className="text-center mt-4">
                             <h1 className="text-2xl font-bold text-gray-900">Report an Incident</h1>
-                            <p className="text-gray-500 text-sm mt-1">
-                                Help emergency responders by uploading a photo of the situation.
-                            </p>
+                            <p className="text-gray-500 text-sm mt-1">Help emergency responders by uploading a photo.</p>
                         </div>
                     )}
 
@@ -261,26 +270,11 @@ const GuestDashboard = ({ onBack }) => {
                         {step === 1 && (
                             <div className="p-8">
                                 <div className="border-2 border-dashed border-blue-200 rounded-2xl bg-blue-50/50 hover:bg-blue-50 transition-colors h-64 flex flex-col items-center justify-center relative group cursor-pointer">
-                                    <input 
-                                        type="file" 
-                                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                                        accept="image/*"
-                                        onChange={handleFileSelect}
-                                        disabled={uploading}
-                                    />
+                                    <input type="file" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept="image/*" onChange={handleFileSelect} disabled={uploading} />
                                     {uploading ? (
-                                        <div className="text-center">
-                                            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mx-auto mb-3"></div>
-                                            <p className="text-blue-600 font-bold">Analyzing...</p>
-                                        </div>
+                                        <div className="text-center"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mx-auto mb-3"></div><p className="text-blue-600 font-bold">Analyzing...</p></div>
                                     ) : (
-                                        <div className="text-center">
-                                            <div className="bg-white p-4 rounded-full shadow-sm mb-3 inline-block group-hover:scale-110 transition-transform">
-                                                <Camera className="h-8 w-8 text-blue-600" />
-                                            </div>
-                                            <p className="font-bold text-gray-700">Tap to Take Photo</p>
-                                            <p className="text-xs text-gray-400 mt-1">or upload from gallery</p>
-                                        </div>
+                                        <div className="text-center"><div className="bg-white p-4 rounded-full shadow-sm mb-3 inline-block group-hover:scale-110 transition-transform"><Camera className="h-8 w-8 text-blue-600" /></div><p className="font-bold text-gray-700">Tap to Take Photo</p><p className="text-xs text-gray-400 mt-1">or upload from gallery</p></div>
                                     )}
                                 </div>
                             </div>
@@ -292,22 +286,20 @@ const GuestDashboard = ({ onBack }) => {
                                 <div className="relative h-48 bg-gray-900">
                                     <img src={previewUrl} alt="Preview" className="w-full h-full object-cover opacity-80" />
                                     <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent text-white">
-                                        <div className="flex items-center gap-2">
-                                            <span className="bg-red-500 px-2 py-0.5 rounded text-xs font-bold uppercase">{analysisResult.type}</span>
-                                            <span className="text-xs opacity-90">Confidence: {analysisResult.confidence}</span>
-                                        </div>
-                                        <p className="font-bold text-lg">{analysisResult.damage} Damage Detected</p>
+                                        <div className="flex items-center gap-2"><span className="bg-red-500 px-2 py-0.5 rounded text-xs font-bold uppercase">{analysisResult.type}</span><span className="text-xs opacity-90">Confidence: {analysisResult.confidence}</span></div>
+                                        <p className="font-bold text-lg">{getDamageText(analysisResult.damage)}</p>
                                     </div>
-                                    <button onClick={resetForm} className="absolute top-4 right-4 bg-black/50 p-1 rounded-full text-white hover:bg-red-600 transition-colors">
-                                        <XCircle size={20} />
-                                    </button>
+                                    <button onClick={resetForm} className="absolute top-4 right-4 bg-black/50 p-1 rounded-full text-white hover:bg-red-600 transition-colors"><XCircle size={20} /></button>
                                 </div>
 
                                 <div className="p-6 space-y-4">
                                     {/* --- SMART LOCATION INPUT --- */}
                                     <div className="relative">
-                                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Location</label>
-                                        <div className="flex items-center gap-2 border rounded-lg p-3 bg-gray-50 focus-within:bg-white focus-within:ring-2 ring-blue-100 transition-all">
+                                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                                            Location <span className="text-red-500">*</span>
+                                        </label>
+                                        
+                                        <div className={`flex items-center gap-2 border rounded-lg p-3 bg-gray-50 focus-within:bg-white focus-within:ring-2 transition-all ${locationError ? 'border-red-500 ring-1 ring-red-200' : 'border-gray-200 focus-within:ring-blue-100'}`}>
                                             {isSearching || locating ? <Loader2 className="animate-spin text-blue-500" size={18} /> : <Search className="text-gray-400" size={18} />}
                                             
                                             <input 
@@ -318,18 +310,20 @@ const GuestDashboard = ({ onBack }) => {
                                                 onChange={handleLocationInput}
                                             />
                                         </div>
+                                        
+                                        {/* Error Message */}
+                                        {locationError && (
+                                            <p className="text-xs text-red-500 mt-1 flex items-center gap-1 font-medium animate-in slide-in-from-top-1">
+                                                <AlertCircle size={12} /> This is a required field
+                                            </p>
+                                        )}
 
                                         {/* DROPDOWN SUGGESTIONS */}
                                         {locationSuggestions.length > 0 && (
                                             <div className="absolute top-full left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-xl z-50 max-h-40 overflow-y-auto mt-1">
                                                 {locationSuggestions.map((loc, index) => (
-                                                    <div 
-                                                        key={index} 
-                                                        onClick={() => handleSelectLocation(loc)}
-                                                        className="p-2.5 text-xs hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0 flex items-center gap-2"
-                                                    >
-                                                        <MapPin size={12} className="text-gray-400"/>
-                                                        {loc.display_name}
+                                                    <div key={index} onClick={() => handleSelectLocation(loc)} className="p-2.5 text-xs hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0 flex items-center gap-2">
+                                                        <MapPin size={12} className="text-gray-400"/> {loc.display_name}
                                                     </div>
                                                 ))}
                                             </div>
@@ -338,59 +332,30 @@ const GuestDashboard = ({ onBack }) => {
 
                                     <div>
                                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Description (Optional)</label>
-                                        <div className="flex items-start gap-2 border rounded-lg p-3 bg-gray-50 focus-within:bg-white focus-within:ring-2 ring-blue-100 transition-all">
+                                        <div className="flex items-start gap-2 border rounded-lg p-3 bg-gray-50 focus-within:bg-white focus-within:ring-2 ring-blue-100 transition-all border-gray-200">
                                             <FileText className="text-gray-400 mt-0.5" size={18} />
-                                            <textarea 
-                                                placeholder="Describe the situation..." 
-                                                className="bg-transparent outline-none w-full text-sm font-medium resize-none"
-                                                rows="2"
-                                                value={formData.description}
-                                                onChange={(e) => setFormData({...formData, description: e.target.value})}
-                                            />
+                                            <textarea placeholder="Describe the situation..." className="bg-transparent outline-none w-full text-sm font-medium resize-none" rows="2" value={formData.description} onChange={(e) => setFormData({...formData, description: e.target.value})} />
                                         </div>
                                     </div>
 
-                                    <button 
-                                        onClick={handleSubmit}
-                                        disabled={submitting}
-                                        className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-all mt-2 shadow-lg shadow-blue-200"
-                                    >
-                                        {submitting ? (
-                                            <span>Sending...</span>
-                                        ) : (
-                                            <>
-                                                <Send size={18} /> Submit Report
-                                            </>
-                                        )}
+                                    <button onClick={handleSubmit} disabled={submitting} className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-all mt-2 shadow-lg shadow-blue-200">
+                                        {submitting ? <span>Sending...</span> : <><Send size={18} /> Submit Report</>}
                                     </button>
                                 </div>
                             </div>
                         )}
 
-                        {/* --- STEP 3: SUCCESS --- */}
                         {step === 3 && (
                             <div className="p-10 text-center flex flex-col items-center justify-center">
-                                <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-6 animate-bounce">
-                                    <CheckCircle className="h-10 w-10 text-green-600" />
-                                </div>
+                                <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-6 animate-bounce"><CheckCircle className="h-10 w-10 text-green-600" /></div>
                                 <h2 className="text-2xl font-bold text-gray-800 mb-2">Report Submitted!</h2>
                                 <p className="text-gray-500 mb-8">Thank you. Responders have been notified.</p>
-                                
-                                <button 
-                                    onClick={resetForm}
-                                    className="w-full py-3 bg-gray-900 text-white rounded-xl font-bold hover:bg-gray-800 transition-colors"
-                                >
-                                    Report Another Incident
-                                </button>
+                                <button onClick={resetForm} className="w-full py-3 bg-gray-900 text-white rounded-xl font-bold hover:bg-gray-800 transition-colors">Report Another Incident</button>
                             </div>
                         )}
 
                     </div>
-                    
-                    <div className="mt-8 text-xs text-center text-gray-400">
-                        QuickDART System &copy; 2025
-                    </div>
-
+                    <div className="mt-8 text-xs text-center text-gray-400">QuickDART System &copy; 2025</div>
                 </div>
             </main>
         </div>

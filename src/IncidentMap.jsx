@@ -28,10 +28,23 @@ const MapFix = () => {
     return null;
 };
 
-const MAP_BOUNDS = [
+ /* const MAP_BOUNDS = [
     [14.6000, 120.8500], // South-West corner (Manila Bay / Navotas area)
     [14.8000, 121.0500]  // North-East corner (Quezon City / Meycauayan border)
+]; */
+
+/* const DAMPALIT_BOUNDS = [
+    [14.6800, 120.9200], // South-West corner (Near Navotas boundary)
+    [14.7150, 120.9600]  // North-East corner (Near Obando/Valenzuela boundary)
+]; */
+
+// Coordinates for Intramuros, Manila
+const INTRAMUROS_BOUNDS = [
+    [14.5829, 120.9673], // South-West corner (Near Rizal Park / Manila Hotel)
+    [14.5960, 120.9811]  // North-East corner (Near Pasig River / Jones Bridge)
 ];
+
+const INTRAMUROS_CENTER = [14.5895, 120.9742]; // Approximate center near Manila Cathedral
 
 /* const MARILAO_BOUNDS = [
     [14.7200, 120.9000], // South-West corner
@@ -55,11 +68,11 @@ const incidents = [
 const IncidentMap = ({ reports = [] }) => {
     return (
         <MapContainer 
-            center={MAP_CENTER} 
+            center={INTRAMUROS_CENTER} 
             zoom={14} 
             minZoom={13} // Prevent zooming out too far (seeing the whole world)
             maxZoom={18} // Prevent zooming in too close
-            maxBounds={MAP_BOUNDS} // Lock view to Marilao
+            maxBounds={INTRAMUROS_BOUNDS} // Lock view to Marilao
             maxBoundsViscosity={1.0} // How "sticky" the bounds are (1.0 = hard stop)
             scrollWheelZoom={true} 
             style={{ height: "100%", width: "100%", borderRadius: "0.5rem", zIndex: 0 }} // Explicit style helps prevent size issues

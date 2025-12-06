@@ -502,7 +502,7 @@ const ResponderDashboard = ({ onLogout }) => {
                                                     'border-gray-300 text-gray-600'
                                                 }`}>
                                                     <AlertTriangle size={20} />
-                                                    <h3 className="text-lg font-bold uppercase tracking-wide">{level} Priority</h3>
+                                                    <h3 className="text-lg font-bold uppercase tracking-wide">{level} </h3>
                                                     <span className="bg-white border px-2 rounded text-xs font-mono ml-auto text-gray-500">{tasksInLevel.length}</span>
                                                 </div>
 

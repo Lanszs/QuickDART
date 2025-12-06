@@ -473,7 +473,7 @@ const AssetsTeams = () => {
 
                                             {/* Action Buttons */}
                                             <div className="flex gap-2 pt-2 border-t border-gray-50">
-                                                <button onClick={() => openDeployModal(team, 'team')} className="flex-1 py-1.5 bg-blue-50 text-blue-700 text-xs font-bold rounded hover:bg-blue-100">Manage Status</button>
+                                               
                                                 <button onClick={() => handleDeleteTeam(team.id)} className="px-2 text-gray-300 hover:text-red-500"><Trash2 size={16}/></button>
                                             </div>
                                         </div>
@@ -561,20 +561,9 @@ const AssetsTeams = () => {
                 </Modal>
             )}
             
-            {/* Deploy Modal (Reused) */}
-            {showDeployModal && (
-                <Modal onClose={() => setShowDeployModal(false)}>
-                    <h3 className="text-xl font-bold mb-4">Manage {selectedItem?.name}</h3>
-                    <label className="block text-sm font-bold text-gray-700 mb-2">Status</label>
-                    <select value={deployStatus} onChange={(e) => setDeployStatus(e.target.value)} className="w-full p-3 border rounded mb-4">
-                        <option value="Deployed">Deployed</option><option value="Idle">Idle</option><option value="Resting">Resting</option>
-                    </select>
-                    {deployStatus === 'Deployed' && (
-                        <textarea value={deployTask} onChange={(e) => setDeployTask(e.target.value)} placeholder="Enter Mission Orders..." className="w-full p-3 border rounded mb-4" rows="3" />
-                    )}
-                    <button onClick={() => handleDeployTeam(selectedItem.id, deployStatus, deployTask)} className="w-full py-2 bg-blue-600 text-white font-bold rounded">Update Status</button>
-                </Modal>
-            )}
+            
+         
+            
 
              {showNotifyModal && (
                 <Modal onClose={() => setShowNotifyModal(false)}>
