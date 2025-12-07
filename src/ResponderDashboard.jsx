@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Camera, MapPin, CheckCircle, User, LogOut, Activity, 
     FileText, Clock, AlertCircle, ChevronRight, XCircle, ImageIcon, 
     MessageSquare, Send, Zap, Coffee, Truck, Radio, Package, Heart, Shield, 
-    AlertTriangle, Calendar, CheckSquare, Plus, Trash2, Wrench, History, Archive, Square, Users } from 'lucide-react';
+    AlertTriangle, Calendar, CheckSquare, Plus, Trash2, Wrench, History, Archive, Square, Users, Loader2 } from 'lucide-react';
 import { io } from 'socket.io-client';
 import { toast } from 'react-toastify';
 
@@ -12,12 +12,15 @@ const socket = io('http://127.0.0.1:5000');
 const ResponderDashboard = ({ onLogout }) => {
     const [activeTab, setActiveTab] = useState('tasks'); 
     const [incidentTab, setIncidentTab] = useState('active');
+    const [loading, setLoading] = useState(true);
 
     // --- USER IDENTITY STATE ---
     const [currentTeamId, setCurrentTeamId] = useState(() => {
         const stored = localStorage.getItem('user_team_id');
         return stored ? parseInt(stored) : null;
     });
+
+    const myTeamRef = useRef(null);
     
     // Data State
     const [reports, setReports] = useState([]); 
@@ -43,6 +46,12 @@ const ResponderDashboard = ({ onLogout }) => {
     const [chatMessage, setChatMessage] = useState("");
     const [messages, setMessages] = useState([]);
     const chatEndRef = useRef(null);
+
+
+    useEffect(() => {
+        myTeamRef.current = myTeam;
+    }, [myTeam]);
+
 
     useEffect(() => {
         const timer = setInterval(() => setTime(new Date()), 1000);
@@ -74,11 +83,13 @@ const ResponderDashboard = ({ onLogout }) => {
 
         const fetchInitialData = async () => {
             try {
+                console.log("🔄 [INIT] Fetching Initial Data...");
                 // 1. Reports
                 const repRes = await fetch(`http://127.0.0.1:5000/api/v1/reports?team_id=${currentTeamId}`);
                 if (repRes.ok) {
                     const allReports = await repRes.json();
                     // Initial Filter: No Pending
+                    console.log("📥 [INIT] Raw Reports Fetched:", allReports.length);
                     setReports(allReports.filter(r => r.status !== 'Pending'));
                 }
 
@@ -87,6 +98,7 @@ const ResponderDashboard = ({ onLogout }) => {
                 if (resRes.ok) {
                     const data = await resRes.json();
                     const team = data.teams.find(t => t.id === parseInt(currentTeamId)); 
+                    console.log("👮 [INIT] My Team Data Loaded:", team);
                     setMyTeam(team);
                 }
 
@@ -132,9 +144,17 @@ const ResponderDashboard = ({ onLogout }) => {
 
         // 3. New Reports (ONLY if not Pending)
         socket.on('new_report', (newReport) => {
+            console.log("⚡ [SOCKET] New Report Arrived:", newReport);
             if (newReport.status !== 'Pending') {
                 setReports(prev => [newReport, ...prev]);
-                toast.info(`New Alert: ${newReport.title}`);
+                
+                // FIX: Use the REF here so we don't need 'myTeam' in dependency array
+                if (isWithinRadius(newReport, myTeamRef.current)) {
+                    toast.info(`New Alert: ${newReport.title}`);
+                }
+                else {
+                    console.log("🔕 [SOCKET] Report ignored (Too far or invalid coords)");
+                }
             }
         });
 
@@ -168,6 +188,57 @@ const ResponderDashboard = ({ onLogout }) => {
             chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
         }
     }, [messages, activeTab]);
+
+    const haversineDistance = (lat1, lon1, lat2, lon2) => {
+        const toRad = (x) => (x * Math.PI) / 180;
+        const R = 6371; // Earth radius in km
+        const dLat = toRad(lat2 - lat1);
+        const dLon = toRad(lon2 - lon1);
+        const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                  Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                  Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
+    };
+
+    // 2. Logic Check (Is it close enough?)
+   const isWithinRadius = (report, teamOverride = null) => {
+        const team = teamOverride || myTeamRef.current; 
+        
+        // 🔍 DEBUG LOG 3: DATA VALIDATION
+        if (!team) {
+            console.warn(`⚠️ [RADIUS] Team data missing for report ${report.id}`);
+            return false;
+        }
+        if (!team.base_latitude || !team.base_longitude) {
+            console.error(`❌ [RADIUS] Team ${team.name} has NO BASE COORDINATES!`);
+            return false;
+        }
+        if (!report.latitude || !report.longitude) {
+            console.warn(`⚠️ [RADIUS] Report ${report.id} ("${report.title}") has NO COORDINATES!`);
+            return false; // Safely hide or return true if you want to see everything
+        }
+        
+        const dist = haversineDistance(
+            parseFloat(team.base_latitude), 
+            parseFloat(team.base_longitude), 
+            parseFloat(report.latitude), 
+            parseFloat(report.longitude)
+        );
+        
+        const radius = parseFloat(team.coverage_radius_km);
+        const isInside = dist <= radius;
+
+        // 🔍 DEBUG LOG 4: CALCULATION RESULT
+        // (Comment this out later if it spams too much)
+        console.log(`📏 [CALC] Report #${report.id} (${report.title})`);
+        console.log(`   📍 Team Base: ${team.base_latitude}, ${team.base_longitude}`);
+        console.log(`   🔥 Incident: ${report.latitude}, ${report.longitude}`);
+        console.log(`   📐 Distance: ${dist.toFixed(2)} km | Limit: ${radius} km`);
+        console.log(`   ✅ Result: ${isInside ? "INSIDE" : "OUTSIDE"}`);
+
+        return isInside;
+    };
 
     // --- CHAT SENDING ---
     const handleSendMessage = () => {
@@ -389,7 +460,13 @@ const ResponderDashboard = ({ onLogout }) => {
     };
 
     // --- UPDATED FILTER: Only show Active/Critical tasks (Hide Pending & Cleared) ---
-    const myTasks = reports.filter(r => r.status === 'Active' || r.status === 'Critical');
+    const myTasks = reports.filter(r => 
+        (r.status === 'Active' || r.status === 'Critical') && 
+        isWithinRadius(r, myTeam)
+    );
+
+    
+
     const clearedReports = reports.filter(r => r.status === 'Cleared');
 
     const getGroupedClearedReports = () => {

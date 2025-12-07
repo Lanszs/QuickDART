@@ -121,7 +121,7 @@ const Login = ({ onLoginSuccess }) => {
       
       // Fallback: If local auth fails (maybe old admin account has diff password), just infer role
       let teamId = null;
-      let userRole = email.includes('admin') ? 'Commander' : 'FieldAgent';
+      let userRole = email.includes('admin') ? 'Commander' : 'Responder';
 
       if (localAuthResponse.ok) {
           const userData = await localAuthResponse.json();
@@ -218,12 +218,12 @@ const App = () => {
                 handleLoginSuccess(session, userData.role, userData.team_id);
             } else {
                 // Fallback if local db is empty but supabase session exists
-                const userRole = userEmail.includes('admin') ? 'Commander' : 'FieldAgent';
+                const userRole = userEmail.includes('admin') ? 'Commander' : 'Responder';
                 handleLoginSuccess(session, userRole, null);
             }
         } catch(e) {
              // Offline fallback
-             const userRole = userEmail.includes('admin') ? 'Commander' : 'FieldAgent';
+             const userRole = userEmail.includes('admin') ? 'Commander' : 'Responder';
              handleLoginSuccess(session, userRole, null);
         }
       }
@@ -273,7 +273,7 @@ const App = () => {
       {!isLoggedIn && <Header onBack={() => setAppMode('welcome')} />}
       <main className="flex-grow flex items-start justify-center">
         {isLoggedIn ? (
-          role === 'FieldAgent' ? (
+          role === 'Responder' ? (
             <ResponderDashboard userRole={role} onLogout={handleLogout} />
           ) : (
             <Dashboard userRole={role} onLogout={handleLogout} />

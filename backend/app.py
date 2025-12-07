@@ -692,83 +692,82 @@ def get_chat_history(room_name):
 @app.route('/api/v1/teams', methods=['POST'])
 def create_team():
     """Create a new Team"""
-
-    print("\n--- 🚀 STARTING CREATE TEAM PROCESS ---") # DEBUG LOG 1
+    print("\n--- 🚀 STARTING CREATE TEAM PROCESS ---") 
 
     session = SessionLocal()
     try:
         data = request.get_json()
+        print(f"📦 Received Data: {data}") 
 
-        print(f"📦 Received Data: {data}") # DEBUG LOG 2
+        # 1. Check if user already exists locally to prevent duplicates
+        if data.get('email'):
+            existing_user = session.query(User).filter(User.agency_id == data['email']).first()
+            if existing_user:
+                return jsonify({"error": "Email already exists"}), 400
 
-        print("🛠️ Attempting to create local Team record...") # DEBUG LOG 3
+        print("🛠️ Attempting to create local Team record...") 
 
+        # --- FIX: ADDED LOCATION DATA HERE ---
         new_team = Team(
             name=data['name'],
             department=data['department'],
             personnel_count=int(data['personnel_count']),
-            status='Idle'
+            status='Idle',
+            # 👇 THESE WERE MISSING 👇
+            base_latitude=data.get('base_latitude'),   
+            base_longitude=data.get('base_longitude'), 
+            coverage_radius_km=float(data.get('coverage_radius_km', 3.0))
+            # 👆 ------------------- 👆
         )
 
         session.add(new_team)
         session.commit()
         session.refresh(new_team)
 
-        print(f"✅ Local Team Created! ID: {new_team.id}, Name: {new_team.name}") # DEBUG LOG 4
+        print(f"✅ Local Team Created! ID: {new_team.id}, Name: {new_team.name}") 
 
         email = data.get('email')
         password = data.get('password')
 
         if email and password:
-
-            print(f"🔑 Credentials found for: {email}. Attempting Supabase creation...") # DEBUG LOG 5
-            # 2. Create User in Supabase (The "Scalable" part)
+            print(f"🔑 Credentials found for: {email}. Attempting Supabase creation...") 
+            
+            # 2. Create User in Supabase
             if supabase:
                 try:
-
-                    print("☁️ Connecting to Supabase...") # DEBUG LOG 6
-
-                    # Using admin.create_user allows us to auto-confirm the email
+                    print("☁️ Connecting to Supabase...") 
                     user_data = {
                         "email": email,
                         "password": password,
                         "email_confirm": True
                     }
                     response = supabase.auth.admin.create_user(user_data)
-                    print(f"✅ Supabase User Created Successfully! ID: {response.user.id}") # DEBUG LOG 7
+                    print(f"✅ Supabase User Created Successfully! ID: {response.user.id}") 
                 except Exception as sb_error:
-                    print(f"❌ Supabase Error: {sb_error}")
-                    # We continue execution to ensure local DB is at least updated
+                    print(f"❌ Supabase Error (User might exist, continuing): {sb_error}")
 
-                else:
-                    print("⚠️ WARNING: Supabase client is None. Skipping cloud creation.") # DEBUG LOG 9
-            
-            print("🛠️ Creating local User record...") # DEBUG LOG 10
             # 3. Create User in Local DB (Linked to the new Team)
+            print("🛠️ Creating local User record...") 
             new_user = User(
                 agency_id=email, 
-                password_hash="managed_by_supabase", # We don't need the real pass here anymore
-                role="FieldAgent", 
-                team_id=new_team.id # <--- THE CRITICAL LINK
+                password_hash="managed_by_supabase", 
+                role="Responder",  # Changed from FieldAgent to match your other code
+                team_id=new_team.id 
             )
             session.add(new_user)
             session.commit()
-
-            print("✅ Local User Linked Successfully!") # DEBUG LOG 11
+            print("✅ Local User Linked Successfully!") 
         
-        # Broadcast update
         socketio.emit('resource_updated', {'type': 'team', 'action': 'created'})
-
         print("--- 🏁 PROCESS COMPLETE ---\n")
 
-        return jsonify({"message": "Team and User Account created successfully"}), 201
+        return jsonify(new_team.to_dict()), 201
+
     except Exception as e:
         session.rollback()
-
-        print(f"\n❌ FATAL ERROR in create_team: {str(e)}") # DEBUG LOG 12
+        print(f"\n❌ FATAL ERROR in create_team: {str(e)}") 
         import traceback
-        traceback.print_exc() # This prints the exact line number of the crash
-
+        traceback.print_exc() 
         return jsonify({"error": str(e)}), 500
     finally:
         session.close()

@@ -26,8 +26,8 @@ class Report(Base):
             "status": self.status,
             "timestamp": self.timestamp.isoformat() + "Z",
             "location": self.location,
-            "lat": self.latitude, 
-            "lng": self.longitude,
+            "latitude": self.latitude, 
+            "longitude": self.longitude,
             "damage_level": self.damage_level,
             "image_url": self.image_url
         }

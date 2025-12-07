@@ -192,6 +192,12 @@ const GuestDashboard = ({ onBack }) => {
             image_url: analysisResult.image_url 
         };
 
+        console.group("🚀 [GUEST] Submitting Report");
+        console.log("📍 Location Name:", newReport.location);
+        console.log("🌎 Coordinates:", newReport.latitude, ",", newReport.longitude);
+        console.log("📦 Full Payload:", newReport);
+        console.groupEnd();
+
         try {
             const response = await fetch('http://127.0.0.1:5000/api/v1/reports', {
                 method: 'POST',
