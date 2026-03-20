@@ -208,24 +208,39 @@ const DamageReports = ({ initialHighlightId }) => {
                         {/* Content */}
                         <div className="p-6 overflow-y-auto">
                             {/* 1. Image */}
-                            <div className="mb-6">
-                                <div className="w-full h-64 bg-gray-100 rounded-xl border border-gray-200 flex items-center justify-center overflow-hidden relative">
-                                    {selectedReport.image_url ? (
-                                        <img src={selectedReport.image_url} 
-                                        alt="Incident"
-                                        className="w-full h-full object-cover" />
-                                    ) : (
-                                        <div className="text-center text-gray-400 flex flex-col items-center">
-                                            <ImageIcon size={48} className="mb-2 opacity-50" />
-                                            <span className="text-sm">No image provided</span>
-                                        </div>
-                                    )}
-                                    {/* Overlay Damage Level on Image */}
-                                    <div className="absolute top-4 right-4 px-3 py-1 bg-black/70 backdrop-blur-md rounded-lg text-white text-xs font-bold border border-white/20 shadow-lg">
-                                        AI: {selectedReport.damage_level}
-                                    </div>
-                                </div>
-                            </div>
+                            <p className="text-xs text-red-500 mb-2">DEBUG: {selectedReport.image_url || "NULL"}</p>
+                            {/* 1. Image or Video */}
+<div className="mb-6">
+    <div className="w-full h-64 bg-gray-100 rounded-xl border border-gray-200 flex items-center justify-center overflow-hidden relative">
+        {selectedReport.image_url ? (
+            // Detect if the saved URL points to a video file
+            /\.(mp4|avi|mov|mkv|webm|flv)/i.test(selectedReport.image_url) ? (
+                <video
+                    src={selectedReport.image_url}
+                    controls
+                    className="w-full h-full object-cover"
+                >
+                    Your browser does not support video playback.
+                </video>
+            ) : (
+                <img
+                    src={selectedReport.image_url}
+                    alt="Incident"
+                    className="w-full h-full object-cover"
+                />
+            )
+        ) : (
+            <div className="text-center text-gray-400 flex flex-col items-center">
+                <ImageIcon size={48} className="mb-2 opacity-50" />
+                <span className="text-sm">No image provided</span>
+            </div>
+        )}
+        {/* Overlay Damage Level */}
+        <div className="absolute top-4 right-4 px-3 py-1 bg-black/70 backdrop-blur-md rounded-lg text-white text-xs font-bold border border-white/20 shadow-lg">
+            AI: {selectedReport.damage_level}
+        </div>
+    </div>
+</div>
 
                             {/* 2. Status Dropdown (The Feature You Requested) */}
                             <div className="mb-6 bg-blue-50 p-4 rounded-xl border border-blue-100 flex items-center justify-between">

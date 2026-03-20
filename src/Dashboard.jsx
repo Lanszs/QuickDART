@@ -150,15 +150,15 @@ const Dashboard = ({ userRole, onLogout }) => {
         if (!analysisResult) return;
 
         const newReport = {
-            title: `Detected: ${analysisResult.type}`,
-            description: `AI Analysis Confidence: ${analysisResult.confidence}. Damage Assessment: ${analysisResult.damage}`,
-            status: 'Active',
-            location: 'Sector 4 (Detected)',
-            latitude: 14.7546,
-            longitude: 120.9466,
-            damage_level: analysisResult.damage,
-            image_url: analysisResult.image_url
-        };
+    title: `Detected: ${analysisResult.type}`,
+    description: `AI Analysis Confidence: ${analysisResult.confidence}. Damage Assessment: ${analysisResult.damage}`,
+    status: 'Active',
+    location: 'Sector 4 (Detected)',
+    latitude: 14.7546,
+    longitude: 120.9466,
+    damage_level: analysisResult.damage,
+    image_url: analysisResult.image_url ?? analysisResult.video_url ?? null
+};
 
         try {
             const response = await fetch('http://127.0.0.1:5000/api/v1/reports', {

@@ -276,11 +276,12 @@ const GuestDashboard = ({ onBack }) => {
                         {step === 1 && (
                             <div className="p-8">
                                 <div className="border-2 border-dashed border-blue-200 rounded-2xl bg-blue-50/50 hover:bg-blue-50 transition-colors h-64 flex flex-col items-center justify-center relative group cursor-pointer">
-                                    <input type="file" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept="image/*" onChange={handleFileSelect} disabled={uploading} />
+                                    <input type="file" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept="image/*,video/*" onChange={handleFileSelect} disabled={uploading} />
                                     {uploading ? (
                                         <div className="text-center"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mx-auto mb-3"></div><p className="text-blue-600 font-bold">Analyzing...</p></div>
                                     ) : (
-                                        <div className="text-center"><div className="bg-white p-4 rounded-full shadow-sm mb-3 inline-block group-hover:scale-110 transition-transform"><Camera className="h-8 w-8 text-blue-600" /></div><p className="font-bold text-gray-700">Tap to Take Photo</p><p className="text-xs text-gray-400 mt-1">or upload from gallery</p></div>
+                                        <div className="text-center"><div className="bg-white p-4 rounded-full shadow-sm mb-3 inline-block group-hover:scale-110 transition-transform"><Camera className="h-8 w-8 text-blue-600" /></div><p className="font-bold text-gray-700">Tap to Upload Photo or Video</p>
+<p className="text-xs text-gray-400 mt-1">Supports images and video files</p></div>
                                     )}
                                 </div>
                             </div>
@@ -290,7 +291,11 @@ const GuestDashboard = ({ onBack }) => {
                         {step === 2 && analysisResult && (
                             <div className="p-0">
                                 <div className="relative h-48 bg-gray-900">
-                                    <img src={previewUrl} alt="Preview" className="w-full h-full object-cover opacity-80" />
+                                    {analysisResult?.source === 'video' ? (
+        <video src={previewUrl} className="w-full h-full object-cover opacity-80" muted autoPlay loop />
+    ) : (
+        <img src={previewUrl} alt="Preview" className="w-full h-full object-cover opacity-80" />
+    )}
                                     <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent text-white">
                                         <div className="flex items-center gap-2"><span className="bg-red-500 px-2 py-0.5 rounded text-xs font-bold uppercase">{analysisResult.type}</span><span className="text-xs opacity-90">Confidence: {analysisResult.confidence}</span></div>
                                         <p className="font-bold text-lg">{getDamageText(analysisResult.damage)}</p>

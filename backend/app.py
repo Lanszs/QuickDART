@@ -1,3 +1,4 @@
+import cv2
 import sys
 import os
 import uuid 
@@ -378,6 +379,75 @@ def notify_asset(asset_id):
         session.close()
 
 
+def predict_from_frames(frames):
+    """
+    Given a list of PIL Images (frames), runs both models on each frame
+    and returns the majority-voted disaster type, damage level, and avg confidence.
+    """
+    type_votes = []
+    damage_votes = []
+    type_confidences = []
+
+    for frame in frames:
+        tensor = transform(frame).unsqueeze(0)
+
+        with torch.no_grad():
+            # Disaster Type
+            type_outputs = type_model(tensor)
+            type_probs = torch.nn.functional.softmax(type_outputs, dim=1)
+            type_conf, type_pred = torch.max(type_probs, 1)
+            type_votes.append(type_pred.item())
+            type_confidences.append(type_conf.item() * 100)
+
+            # Damage Level
+            damage_outputs = damage_model(tensor)
+            _, damage_pred = torch.max(damage_outputs, 1)
+            damage_votes.append(damage_pred.item())
+
+    # Majority vote for final classification
+    final_type_idx = max(set(type_votes), key=type_votes.count)
+    final_damage_idx = max(set(damage_votes), key=damage_votes.count)
+
+    # Average confidence only for frames that voted for the winning class
+    winning_confidences = [
+        c for c, v in zip(type_confidences, type_votes) if v == final_type_idx
+    ]
+    avg_confidence = sum(winning_confidences) / len(winning_confidences)
+
+    return (
+        TYPE_CLASS_NAMES[final_type_idx],
+        DAMAGE_CLASS_NAMES[final_damage_idx],
+        avg_confidence
+    )
+
+
+def extract_frames(video_path, num_frames=10):
+    """
+    Extracts up to `num_frames` evenly spaced frames from a video.
+    Returns a list of PIL Images.
+    """
+    cap = cv2.VideoCapture(video_path)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    if total_frames == 0:
+        cap.release()
+        return []
+
+    # Pick evenly spaced frame indices
+    indices = [int(i * total_frames / num_frames) for i in range(num_frames)]
+    frames = []
+
+    for idx in indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+        ret, frame = cap.read()
+        if ret:
+            # OpenCV uses BGR, PIL uses RGB
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frames.append(Image.fromarray(frame_rgb))
+
+    cap.release()
+    return frames
+
 # --- AI ANALYSIS ROUTE (UPDATED TO SAVE IMAGE) ---
 @app.route('/api/v1/analyze', methods=['POST'])
 def analyze_image():
@@ -389,27 +459,40 @@ def analyze_image():
         return jsonify({"error": "No selected file"}), 400
 
     try:
-        # 1. SAVE THE IMAGE TO DISK
+        # 1. Save the uploaded file to disk
         filename = f"{uuid.uuid4().hex}_{file.filename}"
         upload_folder = os.path.join(app.root_path, 'static', 'uploads')
-
         if not os.path.exists(upload_folder):
             os.makedirs(upload_folder)
-
         filepath = os.path.join(upload_folder, filename)
-        
-        # Reset file pointer before saving, then reset again for AI
-        file.save(filepath) 
-        
-        # 2. Process for AI
-        with open(filepath, 'rb') as f:
-            image_bytes = f.read()
-            
-        image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
-        tensor = transform(image).unsqueeze(0) 
-        
-        # 3. Predict 
-        if type_model and damage_model:
+        file.save(filepath)
+        print(f"DEBUG: filename={filename}, ext={os.path.splitext(filename)[1].lower()}, is_video={os.path.splitext(filename)[1].lower() in {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv'}}")
+
+        # 2. Detect if it's a video or an image
+        video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv'}
+        file_ext = os.path.splitext(filename)[1].lower()
+        is_video = file_ext in video_extensions
+
+        if not (type_model and damage_model):
+            return jsonify({"error": "Models not loaded"}), 500
+
+        if is_video:
+            # --- VIDEO PATH ---
+            frames = extract_frames(filepath, num_frames=10)
+            if not frames:
+                return jsonify({"error": "Could not extract frames from video"}), 400
+
+            detected_type, detected_damage, type_conf = predict_from_frames(frames)
+            image_url = f"http://127.0.0.1:5000/static/uploads/{filename}"
+
+        else:
+            # --- IMAGE PATH (your original logic, unchanged) ---
+            with open(filepath, 'rb') as f:
+                image_bytes = f.read()
+
+            image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+            tensor = transform(image).unsqueeze(0)
+
             with torch.no_grad():
                 type_outputs = type_model(tensor)
                 _, type_preds = torch.max(type_outputs, 1)
@@ -421,24 +504,21 @@ def analyze_image():
                 damage_outputs = damage_model(tensor)
                 _, damage_preds = torch.max(damage_outputs, 1)
             detected_damage = DAMAGE_CLASS_NAMES[damage_preds.item()]
-        else:
-            detected_type = "Unknown"
-            detected_damage = "Unknown"
-            type_conf = 0.0
 
-        # 4. RETURN URL WITH RESULT
-        # IMPORTANT: Use your actual IP or localhost if running locally
-        image_url = f"http://127.0.0.1:5000/static/uploads/{filename}"
-        
+            image_url = f"http://127.0.0.1:5000/static/uploads/{filename}"
+
         return jsonify({
             "type": detected_type,
             "confidence": f"{type_conf:.2f}%",
             "damage": detected_damage,
-            "image_url": image_url # <--- Sends the link to the saved image
+            "image_url": image_url,
+            "source": "video" if is_video else "image"  # Tells frontend what was uploaded
         })
 
     except Exception as e:
         print(f"Prediction Error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 

@@ -840,8 +840,16 @@ const ResponderDashboard = ({ onLogout }) => {
                         
                         <div className="p-6 overflow-y-auto">
                             <div className="mb-6 w-full h-48 bg-gray-100 rounded-xl border border-gray-200 flex items-center justify-center overflow-hidden">
-                                {selectedTask.image_url ? <img src={selectedTask.image_url} alt="Incident" className="w-full h-full object-cover" /> : <ImageIcon size={48} className="text-gray-400 opacity-50" />}
-                            </div>
+    {selectedTask.image_url ? (
+        /\.(mp4|avi|mov|mkv|webm|flv)/i.test(selectedTask.image_url) ? (
+            <video src={selectedTask.image_url} controls className="w-full h-full object-cover">
+                Your browser does not support video playback.
+            </video>
+        ) : (
+            <img src={selectedTask.image_url} alt="Incident" className="w-full h-full object-cover" />
+        )
+    ) : <ImageIcon size={48} className="text-gray-400 opacity-50" />}
+</div>
                             <div className="grid grid-cols-2 gap-4 mb-6">
                                 <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
                                     <p className="text-xs font-bold text-gray-400 uppercase mb-1">Damage Assessment</p>
@@ -923,8 +931,16 @@ const ResponderDashboard = ({ onLogout }) => {
                         </div>
                         <div className="p-6 overflow-y-auto">
                             <div className="mb-6 w-full h-48 bg-gray-100 rounded-xl border border-gray-200 flex items-center justify-center overflow-hidden">
-                                {selectedHistory.image_url ? <img src={selectedHistory.image_url} alt="Incident" className="w-full h-full object-cover" /> : <ImageIcon size={48} className="text-gray-400 opacity-50" />}
-                            </div>
+    {selectedHistory.image_url ? (
+        /\.(mp4|avi|mov|mkv|webm|flv)/i.test(selectedHistory.image_url) ? (
+            <video src={selectedHistory.image_url} controls className="w-full h-full object-cover">
+                Your browser does not support video playback.
+            </video>
+        ) : (
+            <img src={selectedHistory.image_url} alt="Incident" className="w-full h-full object-cover" />
+        )
+    ) : <ImageIcon size={48} className="text-gray-400 opacity-50" />}
+</div>
                             <div className="grid grid-cols-2 gap-4 mb-6">
                                 <div className="bg-gray-50 p-3 rounded-lg border border-gray-200"><p className="text-xs font-bold text-gray-400 uppercase mb-1">Damage Assessment</p><div className={`inline-block px-2 py-0.5 rounded text-sm font-bold border ${getDamageColor(selectedHistory.damage_level)}`}>{selectedHistory.damage_level || "Pending"}</div></div>
                                 <div className="bg-gray-50 p-3 rounded-lg border border-gray-200"><p className="text-xs font-bold text-gray-400 uppercase mb-1">Status</p><div className={`inline-block px-2 py-0.5 rounded text-sm font-bold border ${getStatusColor(selectedHistory.status)}`}>{selectedHistory.status}</div></div>
