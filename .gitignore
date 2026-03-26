@@ -23,3 +23,6 @@ frontend build output
 database files (if local, not recommended for real DB)
 
 *.sqlite
+
+# uploaded media files
+backend/static/uploads/

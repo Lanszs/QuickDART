@@ -19,9 +19,9 @@ from flask_socketio import SocketIO, emit
 
 # --- NOW these imports will work because the path is fixed ---
 from models.user import authenticate_user, User
-from models.database import SessionLocal 
+from models.database import SessionLocal, engine
 from models.report import Report
-from models.resources import Asset, Team 
+from models.resources import Asset, Team
 
 import io
 import torch
@@ -30,6 +30,11 @@ from torchvision import models, transforms
 from PIL import Image
 from datetime import datetime
 import requests
+
+# Add ml_engine to path for Grad-CAM import
+ML_ENGINE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'ml_engine')
+sys.path.append(ML_ENGINE_DIR)
+from gradcam import GradCAM, compute_gradcam_for_frame
 
 # --- SUPABASE CONFIGURATION (SCALABILITY UPGRADE) ---
 # Replace these with your actual Supabase URL and SERVICE ROLE KEY (not the anon key!)
@@ -74,9 +79,44 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TYPE_MODEL_PATH = os.path.join(BASE_DIR, 'ml_engine', 'disaster_type_model.pth')
 DAMAGE_MODEL_PATH = os.path.join(BASE_DIR, 'ml_engine', 'damage_assessment_model.pth')
 
+# --- AUTO-MIGRATION: Add missing columns to reports table ---
+def run_migrations():
+    """Adds new columns if they don't exist. Non-destructive."""
+    from sqlalchemy import text, inspect
+    try:
+        inspector = inspect(engine)
+        existing_columns = [col['name'] for col in inspector.get_columns('reports')]
+        print(f"--- DB columns in 'reports': {existing_columns}")
+
+        migrations = {
+            'disaster_type': "ALTER TABLE reports ADD COLUMN disaster_type VARCHAR",
+            'confidence': "ALTER TABLE reports ADD COLUMN confidence FLOAT",
+            'analysis_metadata': "ALTER TABLE reports ADD COLUMN analysis_metadata TEXT",
+        }
+
+        with engine.connect() as conn:
+            for col_name, sql in migrations.items():
+                if col_name not in existing_columns:
+                    conn.execute(text(sql))
+                    conn.commit()
+                    print(f"   + Added column: {col_name}")
+                else:
+                    print(f"   = Column exists: {col_name}")
+
+        print("--- DB migration check complete ---")
+    except Exception as e:
+        print(f"--- DB migration error (non-fatal): {e}")
+
+run_migrations()
+
 print("--- Loading AI Models ---")
 type_model = load_model(TYPE_MODEL_PATH, len(TYPE_CLASS_NAMES))
 damage_model = load_model(DAMAGE_MODEL_PATH, len(DAMAGE_CLASS_NAMES))
+
+# Initialize Grad-CAM for both models
+type_gradcam = GradCAM(type_model, "layer4") if type_model else None
+damage_gradcam = GradCAM(damage_model, "layer4") if damage_model else None
+print("--- Grad-CAM initialized ---")
 
 # Image Preprocessing
 transform = transforms.Compose([
@@ -379,16 +419,32 @@ def notify_asset(asset_id):
         session.close()
 
 
-def predict_from_frames(frames):
+def predict_from_frames(frames, sid=None):
     """
-    Given a list of PIL Images (frames), runs both models on each frame
-    and returns the majority-voted disaster type, damage level, and avg confidence.
+    Given a list of PIL Images (frames), runs both models on each frame.
+    Returns a dict with majority-voted results, full distributions, and per-frame predictions.
+    Optionally emits progress via Socket.IO if sid is provided.
     """
     type_votes = []
     damage_votes = []
     type_confidences = []
+    damage_confidences = []
+    per_frame_predictions = []
+    total = len(frames)
 
-    for frame in frames:
+    for i, frame in enumerate(frames):
+        # Emit progress update
+        if sid:
+            try:
+                socketio.emit('analysis_progress', {
+                    'stage': 'analyzing',
+                    'current': i + 1,
+                    'total': total,
+                    'message': f'Analyzing frame {i + 1}/{total}...'
+                })
+            except Exception:
+                pass
+
         tensor = transform(frame).unsqueeze(0)
 
         with torch.no_grad():
@@ -401,24 +457,72 @@ def predict_from_frames(frames):
 
             # Damage Level
             damage_outputs = damage_model(tensor)
-            _, damage_pred = torch.max(damage_outputs, 1)
+            damage_probs = torch.nn.functional.softmax(damage_outputs, dim=1)
+            damage_conf, damage_pred = torch.max(damage_probs, 1)
             damage_votes.append(damage_pred.item())
+            damage_confidences.append(damage_conf.item() * 100)
+
+        # Compute Grad-CAM bounding boxes for this frame
+        gradcam_data = {}
+        if type_gradcam and damage_gradcam:
+            try:
+                gradcam_data = compute_gradcam_for_frame(
+                    type_model, damage_model, tensor,
+                    type_gradcam, damage_gradcam
+                )
+                print(f"  [Grad-CAM] Frame {i}: type_bbox={gradcam_data.get('type_bbox')}, damage_bbox={gradcam_data.get('damage_bbox')}", flush=True)
+            except Exception as e:
+                import traceback
+                print(f"  [Grad-CAM] ERROR on frame {i}: {e}", flush=True)
+                traceback.print_exc()
+        else:
+            print(f"  [Grad-CAM] SKIPPED frame {i}: type_gradcam={type_gradcam is not None}, damage_gradcam={damage_gradcam is not None}", flush=True)
+
+        per_frame_predictions.append({
+            "frame_index": i,
+            "type": TYPE_CLASS_NAMES[type_pred.item()],
+            "type_conf": round(type_conf.item() * 100, 2),
+            "damage": DAMAGE_CLASS_NAMES[damage_pred.item()],
+            "damage_conf": round(damage_conf.item() * 100, 2),
+            "type_bbox": gradcam_data.get("type_bbox"),
+            "damage_bbox": gradcam_data.get("damage_bbox"),
+            "damage_bboxes": gradcam_data.get("damage_bboxes", []),
+            "type_heatmap": gradcam_data.get("type_heatmap"),
+            "damage_heatmap": gradcam_data.get("damage_heatmap"),
+        })
 
     # Majority vote for final classification
     final_type_idx = max(set(type_votes), key=type_votes.count)
     final_damage_idx = max(set(damage_votes), key=damage_votes.count)
 
     # Average confidence only for frames that voted for the winning class
-    winning_confidences = [
-        c for c, v in zip(type_confidences, type_votes) if v == final_type_idx
-    ]
-    avg_confidence = sum(winning_confidences) / len(winning_confidences)
+    winning_type_confs = [c for c, v in zip(type_confidences, type_votes) if v == final_type_idx]
+    avg_type_confidence = sum(winning_type_confs) / len(winning_type_confs)
 
-    return (
-        TYPE_CLASS_NAMES[final_type_idx],
-        DAMAGE_CLASS_NAMES[final_damage_idx],
-        avg_confidence
-    )
+    winning_damage_confs = [c for c, v in zip(damage_confidences, damage_votes) if v == final_damage_idx]
+    avg_damage_confidence = sum(winning_damage_confs) / len(winning_damage_confs)
+
+    # Compute vote distributions (percentage of frames voting for each class)
+    total = len(type_votes)
+    type_distribution = {}
+    for idx, name in enumerate(TYPE_CLASS_NAMES):
+        count = type_votes.count(idx)
+        type_distribution[name] = round((count / total) * 100, 1)
+
+    damage_distribution = {}
+    for idx, name in enumerate(DAMAGE_CLASS_NAMES):
+        count = damage_votes.count(idx)
+        damage_distribution[name] = round((count / total) * 100, 1)
+
+    return {
+        "primary_type": TYPE_CLASS_NAMES[final_type_idx],
+        "primary_damage": DAMAGE_CLASS_NAMES[final_damage_idx],
+        "type_confidence": round(avg_type_confidence, 2),
+        "damage_confidence": round(avg_damage_confidence, 2),
+        "type_distribution": type_distribution,
+        "damage_distribution": damage_distribution,
+        "per_frame_predictions": per_frame_predictions
+    }
 
 
 def extract_frames(video_path, num_frames=10):
@@ -476,17 +580,50 @@ def analyze_image():
         if not (type_model and damage_model):
             return jsonify({"error": "Models not loaded"}), 500
 
+        image_url = f"http://127.0.0.1:5000/static/uploads/{filename}"
+
         if is_video:
             # --- VIDEO PATH ---
+            socketio.emit('analysis_progress', {
+                'stage': 'extracting',
+                'message': 'Extracting frames from video...'
+            })
+
             frames = extract_frames(filepath, num_frames=10)
             if not frames:
                 return jsonify({"error": "Could not extract frames from video"}), 400
 
-            detected_type, detected_damage, type_conf = predict_from_frames(frames)
-            image_url = f"http://127.0.0.1:5000/static/uploads/{filename}"
+            # Get video metadata for timeline sync
+            cap = cv2.VideoCapture(filepath)
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            total_frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            video_duration = total_frame_count / fps if fps > 0 else 0
+            cap.release()
+
+            result = predict_from_frames(frames, sid=True)
+
+            socketio.emit('analysis_progress', {
+                'stage': 'complete',
+                'message': 'Analysis complete!'
+            })
+
+            return jsonify({
+                "type": result["primary_type"],
+                "confidence": result["type_confidence"],
+                "damage": result["primary_damage"],
+                "damage_confidence": result["damage_confidence"],
+                "image_url": image_url,
+                "source": "video",
+                "type_distribution": result["type_distribution"],
+                "damage_distribution": result["damage_distribution"],
+                "per_frame_predictions": result["per_frame_predictions"],
+                "video_duration": round(video_duration, 2),
+                "fps": round(fps, 2),
+                "total_analyzed_frames": len(frames)
+            })
 
         else:
-            # --- IMAGE PATH (your original logic, unchanged) ---
+            # --- IMAGE PATH ---
             with open(filepath, 'rb') as f:
                 image_bytes = f.read()
 
@@ -495,25 +632,58 @@ def analyze_image():
 
             with torch.no_grad():
                 type_outputs = type_model(tensor)
-                _, type_preds = torch.max(type_outputs, 1)
                 type_probs = torch.nn.functional.softmax(type_outputs, dim=1)
-                type_conf = type_probs[0][type_preds].item() * 100
-            detected_type = TYPE_CLASS_NAMES[type_preds.item()]
+                type_conf, type_pred = torch.max(type_probs, 1)
 
-            with torch.no_grad():
                 damage_outputs = damage_model(tensor)
-                _, damage_preds = torch.max(damage_outputs, 1)
-            detected_damage = DAMAGE_CLASS_NAMES[damage_preds.item()]
+                damage_probs = torch.nn.functional.softmax(damage_outputs, dim=1)
+                damage_conf, damage_pred = torch.max(damage_probs, 1)
 
-            image_url = f"http://127.0.0.1:5000/static/uploads/{filename}"
+            detected_type = TYPE_CLASS_NAMES[type_pred.item()]
+            detected_damage = DAMAGE_CLASS_NAMES[damage_pred.item()]
 
-        return jsonify({
-            "type": detected_type,
-            "confidence": f"{type_conf:.2f}%",
-            "damage": detected_damage,
-            "image_url": image_url,
-            "source": "video" if is_video else "image"  # Tells frontend what was uploaded
-        })
+            # Build distributions from softmax probabilities
+            type_distribution = {}
+            for idx, name in enumerate(TYPE_CLASS_NAMES):
+                type_distribution[name] = round(type_probs[0][idx].item() * 100, 1)
+
+            damage_distribution = {}
+            for idx, name in enumerate(DAMAGE_CLASS_NAMES):
+                damage_distribution[name] = round(damage_probs[0][idx].item() * 100, 1)
+
+            # Compute Grad-CAM for the image
+            gradcam_data = {}
+            if type_gradcam and damage_gradcam:
+                try:
+                    gradcam_data = compute_gradcam_for_frame(
+                        type_model, damage_model, tensor,
+                        type_gradcam, damage_gradcam
+                    )
+                except Exception as e:
+                    print(f"Grad-CAM error on image: {e}", flush=True)
+
+            return jsonify({
+                "type": detected_type,
+                "confidence": round(type_conf.item() * 100, 2),
+                "damage": detected_damage,
+                "damage_confidence": round(damage_conf.item() * 100, 2),
+                "image_url": image_url,
+                "source": "image",
+                "type_distribution": type_distribution,
+                "damage_distribution": damage_distribution,
+                "per_frame_predictions": [{
+                    "frame_index": 0,
+                    "type": detected_type,
+                    "type_conf": round(type_conf.item() * 100, 2),
+                    "damage": detected_damage,
+                    "damage_conf": round(damage_conf.item() * 100, 2),
+                    "type_bbox": gradcam_data.get("type_bbox"),
+                    "damage_bbox": gradcam_data.get("damage_bbox"),
+                    "damage_bboxes": gradcam_data.get("damage_bboxes", []),
+                    "type_heatmap": gradcam_data.get("type_heatmap"),
+                    "damage_heatmap": gradcam_data.get("damage_heatmap"),
+                }]
+            })
 
     except Exception as e:
         print(f"Prediction Error: {e}")
@@ -575,7 +745,7 @@ def handle_reports():
             if lat and lng:
                 location_name = get_address_from_coords(lat, lng)
 
-            # 3. Save Report with Image URL
+            # 3. Save Report with Image URL and AI analysis data
             new_report = Report(
                 title=data.get('title'),
                 description=data.get('description'),
@@ -585,7 +755,10 @@ def handle_reports():
                 longitude=lng,
                 timestamp=datetime.utcnow(),
                 damage_level=data.get('damage_level', 'Pending'),
-                image_url=data.get('image_url') # <--- Saving the URL!
+                image_url=data.get('image_url'),
+                disaster_type=data.get('disaster_type'),
+                confidence=data.get('confidence'),
+                analysis_metadata=data.get('analysis_metadata')
             )
             session.add(new_report)
             session.commit()
@@ -694,6 +867,82 @@ def update_report(report_id):
         return jsonify({"error": str(e)}), 500
     finally:
         session.close()
+
+# --- LIVE CAMERA ANALYSIS ---
+
+import time as _time
+import base64
+
+_last_live_analysis = {}  # Per-client throttle: {sid: timestamp}
+
+@socketio.on('analyze_live_frame')
+def handle_live_frame(data):
+    """
+    Receives a base64-encoded JPEG frame from the browser.
+    Runs both models + Grad-CAM and emits bounding box results back.
+    """
+    from flask import request as flask_request
+    sid = flask_request.sid
+
+    # Throttle: skip if last analysis was < 500ms ago
+    now = _time.time()
+    if sid in _last_live_analysis and (now - _last_live_analysis[sid]) < 0.5:
+        return
+    _last_live_analysis[sid] = now
+
+    if not (type_model and damage_model):
+        emit('live_frame_result', {'error': 'Models not loaded'})
+        return
+
+    try:
+        frame_data = data.get('frame', '')
+        # Strip data URL prefix if present
+        if ',' in frame_data:
+            frame_data = frame_data.split(',', 1)[1]
+
+        image_bytes = base64.b64decode(frame_data)
+        image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+        tensor = transform(image).unsqueeze(0)
+
+        with torch.no_grad():
+            type_outputs = type_model(tensor)
+            type_probs = torch.nn.functional.softmax(type_outputs, dim=1)
+            type_conf, type_pred = torch.max(type_probs, 1)
+
+            damage_outputs = damage_model(tensor)
+            damage_probs = torch.nn.functional.softmax(damage_outputs, dim=1)
+            damage_conf, damage_pred = torch.max(damage_probs, 1)
+
+        # Compute Grad-CAM bounding boxes
+        gradcam_data = {}
+        if type_gradcam and damage_gradcam:
+            try:
+                gradcam_data = compute_gradcam_for_frame(
+                    type_model, damage_model, tensor,
+                    type_gradcam, damage_gradcam
+                )
+            except Exception as e:
+                print(f"[Live Grad-CAM] Error: {e}", flush=True)
+
+        emit('live_frame_result', {
+            'type': TYPE_CLASS_NAMES[type_pred.item()],
+            'type_conf': round(type_conf.item() * 100, 2),
+            'damage': DAMAGE_CLASS_NAMES[damage_pred.item()],
+            'damage_conf': round(damage_conf.item() * 100, 2),
+            'type_bbox': gradcam_data.get('type_bbox'),
+            'damage_bbox': gradcam_data.get('damage_bbox'),
+            'damage_bboxes': gradcam_data.get('damage_bboxes', []),
+            'timestamp': data.get('timestamp')
+        })
+
+    except Exception as e:
+        print(f"[Live Analysis] Error: {e}", flush=True)
+        emit('live_frame_result', {'error': str(e)})
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    from flask import request as flask_request
+    _last_live_analysis.pop(flask_request.sid, None)
 
 # --- CHAT / COMMUNICATION EVENTS ---
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { FileText, AlertTriangle, MapPin, Calendar, Clock, XCircle, ImageIcon, Activity, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 import { toast } from 'react-toastify';
+import VideoAnalysisPlayer from './components/VideoAnalysisPlayer';
 
 const DamageReports = ({ initialHighlightId }) => {
     const [reports, setReports] = useState([]);
@@ -207,21 +208,28 @@ const DamageReports = ({ initialHighlightId }) => {
 
                         {/* Content */}
                         <div className="p-6 overflow-y-auto">
-                            {/* 1. Image */}
-                            <p className="text-xs text-red-500 mb-2">DEBUG: {selectedReport.image_url || "NULL"}</p>
-                            {/* 1. Image or Video */}
+                            {/* 1. Image or Video with AI Overlay */}
+                            {(() => { console.log('[DamageReports] selectedReport.analysis_metadata:', selectedReport.analysis_metadata); return null; })()}
 <div className="mb-6">
     <div className="w-full h-64 bg-gray-100 rounded-xl border border-gray-200 flex items-center justify-center overflow-hidden relative">
         {selectedReport.image_url ? (
-            // Detect if the saved URL points to a video file
             /\.(mp4|avi|mov|mkv|webm|flv)/i.test(selectedReport.image_url) ? (
-                <video
-                    src={selectedReport.image_url}
-                    controls
-                    className="w-full h-full object-cover"
-                >
-                    Your browser does not support video playback.
-                </video>
+                selectedReport.analysis_metadata?.per_frame_predictions ? (
+                    <VideoAnalysisPlayer
+                        videoUrl={selectedReport.image_url}
+                        frameAnalyses={selectedReport.analysis_metadata.per_frame_predictions}
+                        videoDuration={selectedReport.analysis_metadata.video_duration || 0}
+                        totalFrames={selectedReport.analysis_metadata.total_analyzed_frames || selectedReport.analysis_metadata.per_frame_predictions.length}
+                    />
+                ) : (
+                    <video
+                        src={selectedReport.image_url}
+                        controls
+                        className="w-full h-full object-cover"
+                    >
+                        Your browser does not support video playback.
+                    </video>
+                )
             ) : (
                 <img
                     src={selectedReport.image_url}
@@ -236,7 +244,7 @@ const DamageReports = ({ initialHighlightId }) => {
             </div>
         )}
         {/* Overlay Damage Level */}
-        <div className="absolute top-4 right-4 px-3 py-1 bg-black/70 backdrop-blur-md rounded-lg text-white text-xs font-bold border border-white/20 shadow-lg">
+        <div className="absolute top-4 right-4 px-3 py-1 bg-black/70 backdrop-blur-md rounded-lg text-white text-xs font-bold border border-white/20 shadow-lg z-30">
             AI: {selectedReport.damage_level}
         </div>
     </div>
@@ -259,17 +267,61 @@ const DamageReports = ({ initialHighlightId }) => {
                             {/* 3. Info Grid */}
                             <div className="grid grid-cols-2 gap-6">
                                 <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                                    <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Disaster Type</label>
+                                    <div className="flex items-center gap-2">
+                                        <Activity className="text-orange-500" size={20} />
+                                        <span className="text-lg font-bold text-gray-800">{selectedReport.disaster_type || "Unknown"}</span>
+                                    </div>
+                                    {selectedReport.confidence && (
+                                        <span className="text-xs text-gray-500 mt-1 block">Confidence: {typeof selectedReport.confidence === 'number' ? `${selectedReport.confidence.toFixed(1)}%` : selectedReport.confidence}</span>
+                                    )}
+                                    {/* Type Distribution Bar */}
+                                    {selectedReport.analysis_metadata?.type_distribution && (
+                                        <div className="mt-2 space-y-1">
+                                            <div className="flex gap-0.5 h-2 rounded-full overflow-hidden bg-gray-200">
+                                                {Object.entries(selectedReport.analysis_metadata.type_distribution).map(([name, pct]) => {
+                                                    const colors = { Earthquake: 'bg-amber-500', Fire: 'bg-red-500', Flood: 'bg-blue-500' };
+                                                    return pct > 0 ? <div key={name} className={`${colors[name] || 'bg-gray-400'}`} style={{ width: `${pct}%` }} title={`${name}: ${pct}%`} /> : null;
+                                                })}
+                                            </div>
+                                            <div className="flex gap-2 flex-wrap text-[10px] text-gray-500">
+                                                {Object.entries(selectedReport.analysis_metadata.type_distribution).map(([name, pct]) => (
+                                                    pct > 0 ? <span key={name}>{name}: {pct}%</span> : null
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
                                     <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Assessed Damage</label>
                                     <div className="flex items-center gap-2">
                                         <AlertTriangle className={getDamageColor(selectedReport.damage_level).split(' ')[0]} size={20} />
                                         <span className={`text-lg font-bold ${getDamageColor(selectedReport.damage_level).split(' ')[0]}`}>{selectedReport.damage_level || "Pending"}</span>
                                     </div>
+                                    {/* Damage Distribution Bar */}
+                                    {selectedReport.analysis_metadata?.damage_distribution && (
+                                        <div className="mt-2 space-y-1">
+                                            <div className="flex gap-0.5 h-2 rounded-full overflow-hidden bg-gray-200">
+                                                {Object.entries(selectedReport.analysis_metadata.damage_distribution).map(([name, pct]) => {
+                                                    const colors = { Destroyed: 'bg-red-700', Major: 'bg-orange-500', Minor: 'bg-yellow-500', 'No Damage': 'bg-green-500' };
+                                                    return pct > 0 ? <div key={name} className={`${colors[name] || 'bg-gray-400'}`} style={{ width: `${pct}%` }} title={`${name}: ${pct}%`} /> : null;
+                                                })}
+                                            </div>
+                                            <div className="flex gap-2 flex-wrap text-[10px] text-gray-500">
+                                                {Object.entries(selectedReport.analysis_metadata.damage_distribution).map(([name, pct]) => (
+                                                    pct > 0 ? <span key={name}>{name}: {pct}%</span> : null
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
+                            </div>
+                            <div className="grid grid-cols-1 gap-6 mt-4">
                                 <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
                                     <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Time of Report</label>
-                                    <div className="flex flex-col">
+                                    <div className="flex items-center gap-4">
                                         <span className="text-gray-800 font-bold flex items-center gap-2"><Clock size={16} className="text-blue-500"/>{new Date(selectedReport.timestamp).toLocaleTimeString()}</span>
-                                        <span className="text-gray-500 text-sm flex items-center gap-2 mt-1"><Calendar size={16} />{new Date(selectedReport.timestamp).toLocaleDateString()}</span>
+                                        <span className="text-gray-500 text-sm flex items-center gap-2"><Calendar size={16} />{new Date(selectedReport.timestamp).toLocaleDateString()}</span>
                                     </div>
                                 </div>
                             </div>

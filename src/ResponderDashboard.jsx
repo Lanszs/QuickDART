@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Camera, MapPin, CheckCircle, User, LogOut, Activity, 
-    FileText, Clock, AlertCircle, ChevronRight, XCircle, ImageIcon, 
-    MessageSquare, Send, Zap, Coffee, Truck, Radio, Package, Heart, Shield, 
+import { Camera, MapPin, CheckCircle, User, LogOut, Activity,
+    FileText, Clock, AlertCircle, ChevronRight, XCircle, ImageIcon,
+    MessageSquare, Send, Zap, Coffee, Truck, Radio, Package, Heart, Shield,
     AlertTriangle, Calendar, CheckSquare, Plus, Trash2, Wrench, History, Archive, Square, Users, Loader2 } from 'lucide-react';
+import VideoAnalysisPlayer from './components/VideoAnalysisPlayer';
 import { io } from 'socket.io-client';
 import { toast } from 'react-toastify';
 
@@ -32,6 +33,7 @@ const ResponderDashboard = ({ onLogout }) => {
     const [showTaskModal, setShowTaskModal] = useState(false);
     const [selectedAssets, setSelectedAssets] = useState([]); 
     const [showConfirmModal, setShowConfirmModal] = useState(false);
+    const [showCompleteMissionModal, setShowCompleteMissionModal] = useState(false);
     const [deployedPersonnel, setDeployedPersonnel] = useState(0);
 
     const [showAddAssetModal, setShowAddAssetModal] = useState(false);
@@ -317,10 +319,14 @@ const ResponderDashboard = ({ onLogout }) => {
         }
     };
 
-    // --- 2. COMPLETE MISSION (UPDATED) ---
-    const handleCompleteMission = async () => {
+    // --- 2. COMPLETE MISSION ---
+    const handleCompleteMission = () => {
         if (!myTeam || !selectedTask) return;
-        if(!window.confirm("Mark mission as COMPLETE? This will clear the incident, return assets to base, and notify HQ.")) return;
+        setShowCompleteMissionModal(true);
+    };
+
+    const confirmCompleteMission = async () => {
+        setShowCompleteMissionModal(false);
 
         try {
             // 1. Set Team back to Idle
@@ -839,12 +845,21 @@ const ResponderDashboard = ({ onLogout }) => {
                         </div>
                         
                         <div className="p-6 overflow-y-auto">
-                            <div className="mb-6 w-full h-48 bg-gray-100 rounded-xl border border-gray-200 flex items-center justify-center overflow-hidden">
+                            <div className="mb-6 w-full h-48 bg-gray-100 rounded-xl border border-gray-200 flex items-center justify-center overflow-hidden relative">
     {selectedTask.image_url ? (
         /\.(mp4|avi|mov|mkv|webm|flv)/i.test(selectedTask.image_url) ? (
-            <video src={selectedTask.image_url} controls className="w-full h-full object-cover">
-                Your browser does not support video playback.
-            </video>
+            selectedTask.analysis_metadata?.per_frame_predictions ? (
+                <VideoAnalysisPlayer
+                    videoUrl={selectedTask.image_url}
+                    frameAnalyses={selectedTask.analysis_metadata.per_frame_predictions}
+                    videoDuration={selectedTask.analysis_metadata.video_duration || 0}
+                    totalFrames={selectedTask.analysis_metadata.total_analyzed_frames || selectedTask.analysis_metadata.per_frame_predictions.length}
+                />
+            ) : (
+                <video src={selectedTask.image_url} controls className="w-full h-full object-cover">
+                    Your browser does not support video playback.
+                </video>
+            )
         ) : (
             <img src={selectedTask.image_url} alt="Incident" className="w-full h-full object-cover" />
         )
@@ -930,12 +945,21 @@ const ResponderDashboard = ({ onLogout }) => {
                             <button onClick={() => setShowHistoryModal(false)} className="text-gray-400 hover:text-gray-600 bg-white rounded-full p-1 hover:bg-gray-200"><XCircle size={28} /></button>
                         </div>
                         <div className="p-6 overflow-y-auto">
-                            <div className="mb-6 w-full h-48 bg-gray-100 rounded-xl border border-gray-200 flex items-center justify-center overflow-hidden">
+                            <div className="mb-6 w-full h-48 bg-gray-100 rounded-xl border border-gray-200 flex items-center justify-center overflow-hidden relative">
     {selectedHistory.image_url ? (
         /\.(mp4|avi|mov|mkv|webm|flv)/i.test(selectedHistory.image_url) ? (
-            <video src={selectedHistory.image_url} controls className="w-full h-full object-cover">
-                Your browser does not support video playback.
-            </video>
+            selectedHistory.analysis_metadata?.per_frame_predictions ? (
+                <VideoAnalysisPlayer
+                    videoUrl={selectedHistory.image_url}
+                    frameAnalyses={selectedHistory.analysis_metadata.per_frame_predictions}
+                    videoDuration={selectedHistory.analysis_metadata.video_duration || 0}
+                    totalFrames={selectedHistory.analysis_metadata.total_analyzed_frames || selectedHistory.analysis_metadata.per_frame_predictions.length}
+                />
+            ) : (
+                <video src={selectedHistory.image_url} controls className="w-full h-full object-cover">
+                    Your browser does not support video playback.
+                </video>
+            )
         ) : (
             <img src={selectedHistory.image_url} alt="Incident" className="w-full h-full object-cover" />
         )
@@ -952,13 +976,40 @@ const ResponderDashboard = ({ onLogout }) => {
                 </div>
             )}
 
-            {/* --- CONFIRMATION MODAL --- */}
+            {/* --- DEPLOYMENT CONFIRMATION MODAL --- */}
             {showConfirmModal && (
                 <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[60] animate-in fade-in duration-300">
                     <div className="bg-white p-8 rounded-2xl text-center shadow-2xl max-w-sm w-full transform scale-110">
                         <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4 animate-bounce"><Activity size={40} className="text-green-600" /></div>
                         <h2 className="text-2xl font-bold text-gray-900">Responding Now!</h2>
                         <p className="text-gray-500 mt-2">HQ has been notified. Status set to Deployed.</p>
+                    </div>
+                </div>
+            )}
+
+            {/* --- COMPLETE MISSION CONFIRMATION MODAL --- */}
+            {showCompleteMissionModal && (
+                <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[60] animate-in fade-in duration-300">
+                    <div className="bg-white p-8 rounded-2xl text-center shadow-2xl max-w-sm w-full">
+                        <div className="w-20 h-20 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <CheckSquare size={40} className="text-amber-600" />
+                        </div>
+                        <h2 className="text-2xl font-bold text-gray-900">Complete Mission?</h2>
+                        <p className="text-gray-500 mt-2">This will clear the incident, return assets to base, and notify HQ.</p>
+                        <div className="flex gap-3 mt-6">
+                            <button
+                                onClick={() => setShowCompleteMissionModal(false)}
+                                className="flex-1 px-4 py-2.5 bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 font-bold rounded-lg transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={confirmCompleteMission}
+                                className="flex-1 px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg shadow-md transition-colors"
+                            >
+                                Confirm
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

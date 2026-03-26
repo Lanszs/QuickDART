@@ -1,5 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { Camera, MapPin, AlertTriangle, Send, FileText, XCircle, CheckCircle, ArrowLeft, Activity, Clock, Loader2, Search, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Camera, MapPin, AlertTriangle, Send, FileText, XCircle, CheckCircle, ArrowLeft, Activity, Clock, Loader2, Search, AlertCircle, Video, X, Circle, StopCircle } from 'lucide-react';
+import { io } from 'socket.io-client';
+
+const socket = io('http://127.0.0.1:5000');
 
 const GuestDashboard = ({ onBack }) => {
     const [step, setStep] = useState(1); 
@@ -19,7 +22,30 @@ const GuestDashboard = ({ onBack }) => {
     const [selectedAddress, setSelectedAddress] = useState(''); 
     
     // --- VALIDATION STATE ---
-    const [locationError, setLocationError] = useState(false); // <--- NEW: Tracks validation error
+    const [locationError, setLocationError] = useState(false);
+
+    // --- CAMERA STATE ---
+    const [showCamera, setShowCamera] = useState(false);
+    const [cameraStream, setCameraStream] = useState(null);
+    const [isRecording, setIsRecording] = useState(false);
+    const [recordingTime, setRecordingTime] = useState(0);
+    const cameraVideoRef = useRef(null);
+    const captureCanvasRef = useRef(null);
+    const mediaRecorderRef = useRef(null);
+    const recordedChunksRef = useRef([]);
+    const recordingTimerRef = useRef(null);
+
+    const isCameraSupported = !!(navigator.mediaDevices?.getUserMedia);
+
+    // --- ANALYSIS PROGRESS STATE ---
+    const [analysisProgress, setAnalysisProgress] = useState(null);
+
+    useEffect(() => {
+        socket.on('analysis_progress', (data) => {
+            setAnalysisProgress(data);
+        });
+        return () => socket.off('analysis_progress');
+    }, []);
 
     // Form State
     const [formData, setFormData] = useState({
@@ -132,15 +158,57 @@ const GuestDashboard = ({ onBack }) => {
         }
     };
 
-    // --- 1. HANDLE IMAGE UPLOAD & ANALYZE ---
-    const handleFileSelect = async (event) => {
-        const file = event.target.files[0];
-        if (!file) return;
+    // --- CAMERA FUNCTIONS ---
+    const openCamera = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+                audio: false
+            });
+            setCameraStream(stream);
+            setShowCamera(true);
+            // Attach stream to video element after render
+            setTimeout(() => {
+                if (cameraVideoRef.current) {
+                    cameraVideoRef.current.srcObject = stream;
+                }
+            }, 100);
+        } catch (err) {
+            console.error('Camera access error:', err);
+            if (err.name === 'NotAllowedError') {
+                alert('Camera permission denied. Please allow camera access and try again.');
+            } else if (err.name === 'NotFoundError') {
+                alert('No camera found on this device.');
+            } else {
+                alert('Could not access camera: ' + err.message);
+            }
+        }
+    };
 
+    const closeCamera = useCallback(() => {
+        if (cameraStream) {
+            cameraStream.getTracks().forEach(track => track.stop());
+            setCameraStream(null);
+        }
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            mediaRecorderRef.current.stop();
+        }
+        if (recordingTimerRef.current) {
+            clearInterval(recordingTimerRef.current);
+            recordingTimerRef.current = null;
+        }
+        setShowCamera(false);
+        setIsRecording(false);
+        setRecordingTime(0);
+        recordedChunksRef.current = [];
+    }, [cameraStream]);
+
+    const analyzeFile = async (file) => {
         const objectUrl = URL.createObjectURL(file);
         setPreviewUrl(objectUrl);
         setSelectedFile(file);
         setUploading(true);
+        setAnalysisProgress(null);
 
         const uploadData = new FormData();
         uploadData.append('file', file);
@@ -154,18 +222,157 @@ const GuestDashboard = ({ onBack }) => {
             if (response.ok) {
                 const result = await response.json();
                 setAnalysisResult(result);
-                setStep(2); 
+                setStep(2);
             } else {
                 const err = await response.json();
                 alert(`Analysis Failed: ${err.error || 'Server Error'}`);
-                setStep(1); 
+                setStep(1);
             }
         } catch (error) {
             console.error("Upload error:", error);
             alert("Network Error: Could not connect to server.");
         } finally {
             setUploading(false);
+            setAnalysisProgress(null);
         }
+    };
+
+    const capturePhoto = () => {
+        const video = cameraVideoRef.current;
+        const canvas = captureCanvasRef.current;
+        if (!video || !canvas) return;
+
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0);
+
+        canvas.toBlob((blob) => {
+            if (!blob) return;
+            const file = new File([blob], `camera_capture_${Date.now()}.jpg`, { type: 'image/jpeg' });
+            closeCamera();
+            analyzeFile(file);
+        }, 'image/jpeg', 0.9);
+    };
+
+    const startRecording = () => {
+        if (!cameraStream) return;
+
+        recordedChunksRef.current = [];
+        const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp8')
+            ? 'video/webm;codecs=vp8'
+            : MediaRecorder.isTypeSupported('video/webm')
+                ? 'video/webm'
+                : '';
+
+        const recorder = new MediaRecorder(cameraStream, mimeType ? { mimeType } : {});
+
+        recorder.ondataavailable = (e) => {
+            if (e.data.size > 0) {
+                recordedChunksRef.current.push(e.data);
+            }
+        };
+
+        recorder.onstop = () => {
+            const chunks = recordedChunksRef.current;
+            if (chunks.length === 0) return;
+
+            const ext = mimeType.includes('webm') ? 'webm' : 'mp4';
+            const blob = new Blob(chunks, { type: mimeType || 'video/webm' });
+            const file = new File([blob], `camera_recording_${Date.now()}.${ext}`, { type: blob.type });
+            closeCamera();
+            analyzeFile(file);
+        };
+
+        mediaRecorderRef.current = recorder;
+        recorder.start(1000); // Collect data every second
+        setIsRecording(true);
+        setRecordingTime(0);
+
+        // Timer for recording duration display
+        recordingTimerRef.current = setInterval(() => {
+            setRecordingTime(prev => {
+                if (prev >= 29) {
+                    // Auto-stop at 30 seconds
+                    stopRecording();
+                    return 30;
+                }
+                return prev + 1;
+            });
+        }, 1000);
+    };
+
+    const stopRecording = () => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            mediaRecorderRef.current.stop();
+        }
+        if (recordingTimerRef.current) {
+            clearInterval(recordingTimerRef.current);
+            recordingTimerRef.current = null;
+        }
+        setIsRecording(false);
+    };
+
+    // Cleanup camera on unmount
+    useEffect(() => {
+        return () => {
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(track => track.stop());
+            }
+            if (recordingTimerRef.current) {
+                clearInterval(recordingTimerRef.current);
+            }
+        };
+    }, [cameraStream]);
+
+    // --- 1. HANDLE IMAGE UPLOAD & ANALYZE ---
+    const handleFileSelect = (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        analyzeFile(file);
+    };
+
+    // --- AUTO-GENERATED AI DESCRIPTION ---
+    const generateAIDescription = (result) => {
+        if (!result) return "No analysis data available.";
+
+        const conf = typeof result.confidence === 'number' ? result.confidence.toFixed(1) : result.confidence;
+        const damageConf = typeof result.damage_confidence === 'number' ? ` (${result.damage_confidence.toFixed(1)}% confidence)` : '';
+
+        // Source context
+        const sourceText = result.source === 'video'
+            ? `uploaded video${result.total_analyzed_frames ? ` (${result.total_analyzed_frames} frames analyzed)` : ''}`
+            : 'uploaded image';
+
+        let desc = `AI analysis of ${sourceText} detected ${result.type} with ${conf}% confidence. Damage assessed as ${result.damage}${damageConf}.`;
+
+        // For videos with type distribution, check if multiple types were detected
+        if (result.source === 'video' && result.type_distribution) {
+            const activeTypes = Object.entries(result.type_distribution)
+                .filter(([, pct]) => pct > 0)
+                .sort((a, b) => b[1] - a[1]);
+
+            if (activeTypes.length > 1) {
+                const breakdown = activeTypes.map(([name, pct]) => `${name} ${pct}%`).join(', ');
+                desc += ` Multiple disaster indicators found across frames: ${breakdown}.`;
+            } else {
+                desc += ` Consistent ${result.type} detection across all analyzed frames.`;
+            }
+        }
+
+        // For videos with damage distribution, note if mixed
+        if (result.source === 'video' && result.damage_distribution) {
+            const activeDamage = Object.entries(result.damage_distribution)
+                .filter(([, pct]) => pct > 0)
+                .sort((a, b) => b[1] - a[1]);
+
+            if (activeDamage.length > 1) {
+                const breakdown = activeDamage.map(([name, pct]) => `${name} ${pct}%`).join(', ');
+                desc += ` Damage levels varied across frames: ${breakdown}.`;
+            }
+        }
+
+        return desc;
     };
 
     // --- 3. SUBMIT REPORT (WITH VALIDATION) ---
@@ -183,13 +390,16 @@ const GuestDashboard = ({ onBack }) => {
 
         const newReport = {
             title: `Public Report: ${analysisResult.type}`,
-            description: formData.description || `AI Detected ${analysisResult.damage}.`,
+            description: formData.description || generateAIDescription(analysisResult),
             status: 'Pending',
             location: formData.location, // Must be valid now
-            latitude: formData.latitude || 14.7546, 
+            latitude: formData.latitude || 14.7546,
             longitude: formData.longitude || 120.9466,
             damage_level: analysisResult.damage,
-            image_url: analysisResult.image_url 
+            image_url: analysisResult.image_url,
+            disaster_type: analysisResult.type,
+            confidence: typeof analysisResult.confidence === 'number' ? analysisResult.confidence : parseFloat(analysisResult.confidence),
+            analysis_metadata: JSON.stringify(analysisResult)
         };
 
         console.group("🚀 [GUEST] Submitting Report");
@@ -274,15 +484,118 @@ const GuestDashboard = ({ onBack }) => {
                         
                         {/* --- STEP 1: UPLOAD --- */}
                         {step === 1 && (
-                            <div className="p-8">
-                                <div className="border-2 border-dashed border-blue-200 rounded-2xl bg-blue-50/50 hover:bg-blue-50 transition-colors h-64 flex flex-col items-center justify-center relative group cursor-pointer">
+                            <div className="p-8 space-y-4">
+                                {/* File upload dropzone */}
+                                <div className="border-2 border-dashed border-blue-200 rounded-2xl bg-blue-50/50 hover:bg-blue-50 transition-colors h-52 flex flex-col items-center justify-center relative group cursor-pointer">
                                     <input type="file" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept="image/*,video/*" onChange={handleFileSelect} disabled={uploading} />
                                     {uploading ? (
-                                        <div className="text-center"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mx-auto mb-3"></div><p className="text-blue-600 font-bold">Analyzing...</p></div>
+                                        <div className="text-center">
+                                            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mx-auto mb-3"></div>
+                                            <p className="text-blue-600 font-bold">
+                                                {analysisProgress?.message || 'Analyzing...'}
+                                            </p>
+                                            {analysisProgress?.total && (
+                                                <div className="mt-2 w-48 mx-auto">
+                                                    <div className="h-1.5 bg-blue-100 rounded-full overflow-hidden">
+                                                        <div className="h-full bg-blue-600 rounded-full transition-all duration-300" style={{ width: `${(analysisProgress.current / analysisProgress.total) * 100}%` }} />
+                                                    </div>
+                                                    <p className="text-xs text-blue-400 mt-1">{analysisProgress.current}/{analysisProgress.total} frames</p>
+                                                </div>
+                                            )}
+                                        </div>
                                     ) : (
                                         <div className="text-center"><div className="bg-white p-4 rounded-full shadow-sm mb-3 inline-block group-hover:scale-110 transition-transform"><Camera className="h-8 w-8 text-blue-600" /></div><p className="font-bold text-gray-700">Tap to Upload Photo or Video</p>
 <p className="text-xs text-gray-400 mt-1">Supports images and video files</p></div>
                                     )}
+                                </div>
+
+                                {/* Divider */}
+                                <div className="flex items-center gap-3">
+                                    <div className="flex-1 h-px bg-gray-200"></div>
+                                    <span className="text-xs text-gray-400 font-bold uppercase">or</span>
+                                    <div className="flex-1 h-px bg-gray-200"></div>
+                                </div>
+
+                                {/* Camera button */}
+                                {isCameraSupported && (
+                                    <button
+                                        onClick={openCamera}
+                                        disabled={uploading}
+                                        className="w-full py-4 bg-gray-900 hover:bg-gray-800 text-white rounded-2xl font-bold flex items-center justify-center gap-3 transition-all shadow-lg disabled:opacity-50"
+                                    >
+                                        <Video size={22} />
+                                        Open Camera
+                                    </button>
+                                )}
+                            </div>
+                        )}
+
+                        {/* --- CAMERA MODAL --- */}
+                        {showCamera && (
+                            <div className="fixed inset-0 bg-black z-[100] flex flex-col">
+                                {/* Camera preview */}
+                                <video
+                                    ref={cameraVideoRef}
+                                    autoPlay
+                                    playsInline
+                                    muted
+                                    className="flex-1 w-full object-cover"
+                                />
+                                <canvas ref={captureCanvasRef} className="hidden" />
+
+                                {/* Recording indicator */}
+                                {isRecording && (
+                                    <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-red-600 text-white px-4 py-2 rounded-full flex items-center gap-2 animate-pulse z-10">
+                                        <Circle size={10} className="fill-white" />
+                                        <span className="font-bold font-mono text-sm">REC {recordingTime}s / 30s</span>
+                                    </div>
+                                )}
+
+                                {/* Close button */}
+                                <button
+                                    onClick={closeCamera}
+                                    className="absolute top-6 right-6 bg-black/50 hover:bg-black/70 text-white p-2 rounded-full z-10 transition-colors"
+                                >
+                                    <X size={24} />
+                                </button>
+
+                                {/* Camera controls */}
+                                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-8 flex items-center justify-center gap-8">
+                                    {/* Capture Photo */}
+                                    <button
+                                        onClick={capturePhoto}
+                                        disabled={isRecording}
+                                        className="w-16 h-16 bg-white rounded-full border-4 border-gray-300 hover:scale-105 active:scale-95 transition-transform disabled:opacity-30 flex items-center justify-center shadow-lg"
+                                        title="Capture Photo"
+                                    >
+                                        <Camera size={24} className="text-gray-800" />
+                                    </button>
+
+                                    {/* Record / Stop Video */}
+                                    {isRecording ? (
+                                        <button
+                                            onClick={stopRecording}
+                                            className="w-16 h-16 bg-red-600 hover:bg-red-700 rounded-full border-4 border-red-300 hover:scale-105 active:scale-95 transition-all flex items-center justify-center shadow-lg"
+                                            title="Stop Recording"
+                                        >
+                                            <StopCircle size={28} className="text-white" />
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={startRecording}
+                                            className="w-16 h-16 bg-red-500 hover:bg-red-600 rounded-full border-4 border-red-200 hover:scale-105 active:scale-95 transition-all flex items-center justify-center shadow-lg"
+                                            title="Record Video"
+                                        >
+                                            <Circle size={28} className="text-white fill-white" />
+                                        </button>
+                                    )}
+                                </div>
+
+                                {/* Helper text */}
+                                <div className="absolute bottom-2 left-0 right-0 text-center">
+                                    <p className="text-white/60 text-[10px]">
+                                        {isRecording ? 'Tap red button to stop recording' : 'Photo (left) or Video (right) - max 30 seconds'}
+                                    </p>
                                 </div>
                             </div>
                         )}
@@ -297,8 +610,24 @@ const GuestDashboard = ({ onBack }) => {
         <img src={previewUrl} alt="Preview" className="w-full h-full object-cover opacity-80" />
     )}
                                     <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent text-white">
-                                        <div className="flex items-center gap-2"><span className="bg-red-500 px-2 py-0.5 rounded text-xs font-bold uppercase">{analysisResult.type}</span><span className="text-xs opacity-90">Confidence: {analysisResult.confidence}</span></div>
+                                        <div className="flex items-center gap-2"><span className="bg-red-500 px-2 py-0.5 rounded text-xs font-bold uppercase">{analysisResult.type}</span><span className="text-xs opacity-90">Confidence: {typeof analysisResult.confidence === 'number' ? `${analysisResult.confidence.toFixed(1)}%` : analysisResult.confidence}</span></div>
                                         <p className="font-bold text-lg">{getDamageText(analysisResult.damage)}</p>
+                                        {/* Distribution breakdown */}
+                                        {analysisResult.type_distribution && (
+                                            <div className="mt-2 space-y-1">
+                                                <div className="flex gap-1 h-2 rounded-full overflow-hidden bg-black/30">
+                                                    {Object.entries(analysisResult.type_distribution).map(([name, pct]) => {
+                                                        const colors = { Earthquake: 'bg-amber-500', Fire: 'bg-red-500', Flood: 'bg-blue-500' };
+                                                        return pct > 0 ? <div key={name} className={`${colors[name] || 'bg-gray-400'}`} style={{ width: `${pct}%` }} title={`${name}: ${pct}%`} /> : null;
+                                                    })}
+                                                </div>
+                                                <div className="flex gap-3 text-[10px] opacity-80">
+                                                    {Object.entries(analysisResult.type_distribution).map(([name, pct]) => (
+                                                        pct > 0 ? <span key={name}>{name}: {pct}%</span> : null
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                     <button onClick={resetForm} className="absolute top-4 right-4 bg-black/50 p-1 rounded-full text-white hover:bg-red-600 transition-colors"><XCircle size={20} /></button>
                                 </div>
@@ -373,4 +702,4 @@ const GuestDashboard = ({ onBack }) => {
     );
 };
 
-export default GuestDashboard;
+export default GuestDashboard;a

@@ -146,18 +146,46 @@ const Dashboard = ({ userRole, onLogout }) => {
     // This creates a list that EXCLUDES "Cleared" items
     const activeIncidentLog = reports.filter(r => r.status !== 'Cleared');
 
+    const generateAIDescription = (result) => {
+        if (!result) return "No analysis data available.";
+        const conf = typeof result.confidence === 'number' ? result.confidence.toFixed(1) : result.confidence;
+        const damageConf = typeof result.damage_confidence === 'number' ? ` (${result.damage_confidence.toFixed(1)}% confidence)` : '';
+        const sourceText = result.source === 'video'
+            ? `uploaded video${result.total_analyzed_frames ? ` (${result.total_analyzed_frames} frames analyzed)` : ''}`
+            : 'uploaded image';
+        let desc = `AI analysis of ${sourceText} detected ${result.type} with ${conf}% confidence. Damage assessed as ${result.damage}${damageConf}.`;
+        if (result.source === 'video' && result.type_distribution) {
+            const activeTypes = Object.entries(result.type_distribution).filter(([, pct]) => pct > 0).sort((a, b) => b[1] - a[1]);
+            if (activeTypes.length > 1) {
+                desc += ` Multiple disaster indicators: ${activeTypes.map(([n, p]) => `${n} ${p}%`).join(', ')}.`;
+            } else {
+                desc += ` Consistent ${result.type} detection across all frames.`;
+            }
+        }
+        if (result.source === 'video' && result.damage_distribution) {
+            const activeDamage = Object.entries(result.damage_distribution).filter(([, pct]) => pct > 0).sort((a, b) => b[1] - a[1]);
+            if (activeDamage.length > 1) {
+                desc += ` Damage levels: ${activeDamage.map(([n, p]) => `${n} ${p}%`).join(', ')}.`;
+            }
+        }
+        return desc;
+    };
+
     const saveReport = async () => {
         if (!analysisResult) return;
 
         const newReport = {
     title: `Detected: ${analysisResult.type}`,
-    description: `AI Analysis Confidence: ${analysisResult.confidence}. Damage Assessment: ${analysisResult.damage}`,
+    description: generateAIDescription(analysisResult),
     status: 'Active',
     location: 'Sector 4 (Detected)',
     latitude: 14.7546,
     longitude: 120.9466,
     damage_level: analysisResult.damage,
-    image_url: analysisResult.image_url ?? analysisResult.video_url ?? null
+    image_url: analysisResult.image_url ?? analysisResult.video_url ?? null,
+    disaster_type: analysisResult.type,
+    confidence: typeof analysisResult.confidence === 'number' ? analysisResult.confidence : parseFloat(analysisResult.confidence),
+    analysis_metadata: JSON.stringify(analysisResult)
 };
 
         try {
@@ -452,7 +480,7 @@ const Dashboard = ({ userRole, onLogout }) => {
                                                 <div className="mt-3">
                                                     <div className="flex items-center gap-4 mb-2">
                                                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-sm font-medium bg-red-100 text-red-800"><AlertTriangle size={14} /> Detected: {analysisResult.type}</span>
-                                                        <span className="text-xs text-gray-500">Confidence: {analysisResult.confidence}</span>
+                                                        <span className="text-xs text-gray-500">Confidence: {typeof analysisResult.confidence === 'number' ? `${analysisResult.confidence.toFixed(1)}%` : analysisResult.confidence}</span>
                                                     </div>
                                                     <p className="text-sm text-gray-600"><strong>Assessment:</strong> {analysisResult.damage}</p>
                                                 </div>

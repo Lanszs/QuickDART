@@ -57,5 +57,5 @@ if __name__ == "__main__":
     TEST_IMAGE = "ml_engine/test_image.jpg" 
     
     MODEL_PATH = "ml_engine/disaster_type_model.pth"
-    
+
     predict_image(TEST_IMAGE, MODEL_PATH)

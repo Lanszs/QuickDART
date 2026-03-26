@@ -8,7 +8,7 @@
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
-    "dev": "concurrently \"npm start\" \"cd backend && python app.py\""
+    "dev": "concurrently \"npm start\" \"cd backend && venv\\Scripts\\python app.py\""
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.86.0",
