@@ -87,23 +87,50 @@ const Dashboard = ({ userRole, onLogout }) => {
     );
     };
 
-    const IncidentCard = ({ report, expandedId, onToggle, onValidate }) => {
+    const handleQuickValidate = async (reportId, e) => {
+        e.stopPropagation();
+        try {
+            const response = await fetch(`http://127.0.0.1:5000/api/v1/reports/${reportId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'Active' })
+            });
+            if (response.ok) {
+                const updated = await response.json();
+                setReports(prev => prev.map(r => r.id === updated.id ? updated : r));
+                toast.success("Report validated → Active");
+            } else {
+                toast.error("Failed to validate report");
+            }
+        } catch (error) {
+            console.error("Quick validate error:", error);
+            toast.error("Network error");
+        }
+    };
+
+    const IncidentCard = ({ report, expandedId, onToggle, onValidate, teams }) => {
     const isExpanded = expandedId === report.id;
     const isPending = report.status === 'Pending';
-    
+    const claimedTeam = report.claimed_by_team_id ? (teams || []).find(t => t.id === report.claimed_by_team_id) : null;
+
     return (
-        <div 
-            onClick={() => onToggle(report.id)} 
+        <div
+            onClick={() => onToggle(report.id)}
             className={`p-4 rounded-xl border transition-all cursor-pointer group ${
-                isExpanded 
-                ? "bg-blue-50 border-blue-200 shadow-md" 
+                isExpanded
+                ? "bg-blue-50 border-blue-200 shadow-md"
                 : isPending ? "bg-orange-50 border-orange-200/50 hover:border-orange-300" : "bg-white border-gray-100 hover:border-blue-200 hover:shadow-sm"
             }`}
         >
             <div className="flex justify-between items-start mb-2">
                 <div className="flex flex-col">
                     <span className="font-bold text-gray-800 text-sm">{report.title}</span>
-                    <span className="text-xs text-gray-400">{report.timestamp}</span>
+                    <span className="text-xs text-gray-400">{report.timestamp ? new Date(report.timestamp).toLocaleString() : ''}</span>
+                    {claimedTeam && (
+                        <span className="text-xs font-bold text-white bg-blue-600 px-2.5 py-0.5 rounded-full mt-1.5 w-fit flex items-center gap-1">
+                            <Users size={10} /> {claimedTeam.name}
+                        </span>
+                    )}
                 </div>
                 <div className="flex flex-col items-end gap-1">
                     <StatusBadge status={report.status} />
@@ -113,15 +140,26 @@ const Dashboard = ({ userRole, onLogout }) => {
 
             {!isExpanded && (
                 <div className="flex justify-between items-end mt-2">
-                    <p className="text-xs text-gray-600 line-clamp-1 w-3/4">{report.description}</p>
-                    <ChevronDown size={16} className="text-gray-400 group-hover:text-blue-500 transition-colors" />
+                    <p className="text-xs text-gray-600 line-clamp-1 flex-1 mr-2">{report.description}</p>
+                    <div className="flex items-center gap-2 shrink-0">
+                        {isPending && (
+                            <button
+                                onClick={(e) => handleQuickValidate(report.id, e)}
+                                className="flex items-center gap-1 bg-green-600 text-white px-2.5 py-1 rounded-lg text-[10px] font-bold hover:bg-green-700 transition-colors shadow-sm"
+                                title="Quick validate to Active"
+                            >
+                                <CheckCircle size={12} /> Validate
+                            </button>
+                        )}
+                        <ChevronDown size={16} className="text-gray-400 group-hover:text-blue-500 transition-colors" />
+                    </div>
                 </div>
             )}
 
             {isExpanded && (
                 <div className="mt-3 pt-3 border-t border-blue-100/50 text-sm text-gray-700 space-y-3 animate-in slide-in-from-top-2 duration-200">
                     <div><span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Situation Report</span><p className="text-sm mt-1 leading-relaxed">{report.description}</p></div>
-                    
+
                     <div className="bg-white p-3 rounded-lg border border-gray-200">
                         <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Exact Location</span>
                         <p className="text-sm font-medium text-gray-800 mt-0.5">{report.location}</p>
@@ -129,8 +167,8 @@ const Dashboard = ({ userRole, onLogout }) => {
                     </div>
 
                     <div className="flex justify-end pt-2">
-                        <button 
-                            onClick={(e) => { e.stopPropagation(); onValidate(report.id); }} 
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onValidate(report.id); }}
                             className="flex items-center gap-2 bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-red-700 transition-colors"
                         >
                             <FileText size={14} /> Triage & Validate
@@ -499,7 +537,7 @@ const Dashboard = ({ userRole, onLogout }) => {
                             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
                                 <div className="lg:col-span-2 bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col h-[700px]">
                                     <h2 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2"><MapIcon className="text-blue-600" /> Live Incident Map</h2>
-                                    <div className="flex-1 rounded-lg overflow-hidden border border-gray-300 relative z-0"><IncidentMap reports={reports} /></div>
+                                    <div className="flex-1 rounded-lg overflow-hidden border border-gray-300 relative z-0"><IncidentMap reports={reports} teams={teams} /></div>
                                 </div>
 
                                 <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col h-[700px]">
@@ -516,7 +554,7 @@ const Dashboard = ({ userRole, onLogout }) => {
                                                         <div className="flex items-center gap-2 mb-2 text-orange-700 font-bold text-xs uppercase tracking-wider border-b border-orange-100 pb-1"><AlertCircle size={14} /> Pending Validation</div>
                                                         <div className="space-y-3">
                                                             {groupedReports.pending.map(report => (
-                                                                <IncidentCard key={report.id} report={report} expandedId={expandedReportId} onToggle={toggleReport} onValidate={handleValidateClick} />
+                                                                <IncidentCard key={report.id} report={report} expandedId={expandedReportId} onToggle={toggleReport} onValidate={handleValidateClick} teams={teams} />
                                                             ))}
                                                         </div>
                                                     </div>
@@ -526,7 +564,7 @@ const Dashboard = ({ userRole, onLogout }) => {
                                                         <div className="flex items-center gap-2 mb-2 text-blue-700 font-bold text-xs uppercase tracking-wider border-b border-blue-100 pb-1"><Activity size={14} /> Active Incidents</div>
                                                         <div className="space-y-3">
                                                             {groupedReports.active.map(report => (
-                                                                <IncidentCard key={report.id} report={report} expandedId={expandedReportId} onToggle={toggleReport} onValidate={handleValidateClick} />
+                                                                <IncidentCard key={report.id} report={report} expandedId={expandedReportId} onToggle={toggleReport} onValidate={handleValidateClick} teams={teams} />
                                                             ))}
                                                         </div>
                                                     </div>
@@ -590,7 +628,7 @@ const Dashboard = ({ userRole, onLogout }) => {
                     {activeTab === 'damage_reports' && <DamageReports initialHighlightId={reportToValidate} />}
 
                     {/* VIEW 5: STATISTICS */}
-                    {activeTab === 'statistics' && <Statistics reports={reports} />}
+                    {activeTab === 'statistics' && <Statistics reports={reports} teams={teams} />}
 
                 </main>
                 <ToastContainer />

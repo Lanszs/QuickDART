@@ -1,5 +1,5 @@
 import React , { useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -15,6 +15,15 @@ let DefaultIcon = L.icon({
 });
 
 L.Marker.prototype.options.icon = DefaultIcon;
+
+const TeamIcon = L.divIcon({
+    className: 'team-marker',
+    html: `<div style="background:#3B82F6;width:28px;height:28px;border-radius:50%;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+    </div>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+});
 // -----------------------------------------------------
 
 const MapFix = () => {
@@ -65,7 +74,7 @@ const incidents = [
 ];
 
 // 1. Define the component function
-const IncidentMap = ({ reports = [] }) => {
+const IncidentMap = ({ reports = [], teams = [] }) => {
     return (
         <MapContainer 
             center={INTRAMUROS_CENTER} 
@@ -86,14 +95,11 @@ const IncidentMap = ({ reports = [] }) => {
             />
 
             {reports
-                .filter(report => report.status !== 'Cleared') 
+                .filter(report => report.status !== 'Cleared')
                 .map((report) => {
-                    // --- ROBUST COORDINATE CHECK ---
-                    // Check for both 'latitude' (Database) and 'lat' (Legacy/Mock)
                     const lat = report.latitude || report.lat;
                     const lng = report.longitude || report.lng;
 
-                    // Only render if we have valid numbers
                     if (lat && lng) {
                         return (
                             <Marker key={report.id} position={[lat, lng]}>
@@ -113,6 +119,49 @@ const IncidentMap = ({ reports = [] }) => {
                     return null;
                 })
             }
+
+            {(teams || []).map((team) => {
+                const lat = team.base_latitude;
+                const lng = team.base_longitude;
+                if (!lat || !lng) return null;
+
+                const available = (team.available_personnel != null) ? team.available_personnel : team.personnel;
+                const total = team.personnel || 0;
+
+                return (
+                    <React.Fragment key={`team-${team.id}`}>
+                        <Circle
+                            center={[lat, lng]}
+                            radius={(team.coverage_radius_km || 5) * 1000}
+                            pathOptions={{
+                                color: '#3B82F6',
+                                fillColor: '#3B82F6',
+                                fillOpacity: 0.06,
+                                weight: 1.5,
+                                dashArray: '6 4',
+                            }}
+                        />
+                        <Marker position={[lat, lng]} icon={TeamIcon}>
+                            <Popup>
+                                <div className="text-sm min-w-[160px]">
+                                    <strong className="block text-blue-700 text-base">{team.name}</strong>
+                                    <p className="text-xs text-gray-500 mt-0.5">{team.department || 'No Department'}</p>
+                                    <div className="flex items-center gap-1.5 mt-1.5">
+                                        <span className={`inline-block w-2 h-2 rounded-full ${team.status === 'Available' ? 'bg-green-500' : team.status === 'Deployed' ? 'bg-yellow-500' : 'bg-gray-400'}`}></span>
+                                        <span className="text-xs font-medium">{team.status || 'Unknown'}</span>
+                                    </div>
+                                    <p className="text-xs mt-1.5 text-gray-700">
+                                        <span className="font-semibold">{available}/{total}</span> personnel available
+                                    </p>
+                                    <p className="text-[10px] text-gray-400 mt-1">
+                                        Coverage: {team.coverage_radius_km || 5} km
+                                    </p>
+                                </div>
+                            </Popup>
+                        </Marker>
+                    </React.Fragment>
+                );
+            })}
         </MapContainer>
     );
 };

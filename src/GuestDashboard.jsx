@@ -35,6 +35,13 @@ const GuestDashboard = ({ onBack }) => {
     const recordedChunksRef = useRef([]);
     const recordingTimerRef = useRef(null);
 
+    // --- LIVE ANALYSIS STATE ---
+    const [liveResult, setLiveResult] = useState(null);
+    const overlayCanvasRef = useRef(null);
+    const liveIntervalRef = useRef(null);
+    const resultCanvasRef = useRef(null);
+    const resultImageRef = useRef(null);
+
     const isCameraSupported = !!(navigator.mediaDevices?.getUserMedia);
 
     // --- ANALYSIS PROGRESS STATE ---
@@ -197,6 +204,12 @@ const GuestDashboard = ({ onBack }) => {
             clearInterval(recordingTimerRef.current);
             recordingTimerRef.current = null;
         }
+        // Stop live analysis streaming
+        if (liveIntervalRef.current) {
+            clearInterval(liveIntervalRef.current);
+            liveIntervalRef.current = null;
+        }
+        setLiveResult(null);
         setShowCamera(false);
         setIsRecording(false);
         setRecordingTime(0);
@@ -313,6 +326,154 @@ const GuestDashboard = ({ onBack }) => {
         setIsRecording(false);
     };
 
+    // --- LIVE ANALYSIS: stream frames to backend ---
+    const startLiveStreaming = useCallback(() => {
+        if (liveIntervalRef.current) return;
+        liveIntervalRef.current = setInterval(() => {
+            const video = cameraVideoRef.current;
+            if (!video || video.readyState < 2) return;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0);
+            const base64Data = canvas.toDataURL('image/jpeg', 0.5);
+            socket.emit('analyze_live_frame', { frame: base64Data });
+        }, 500);
+    }, []);
+
+    const stopLiveStreaming = useCallback(() => {
+        if (liveIntervalRef.current) {
+            clearInterval(liveIntervalRef.current);
+            liveIntervalRef.current = null;
+        }
+        setLiveResult(null);
+    }, []);
+
+    // Draw bounding boxes on overlay canvas
+    const drawLiveOverlay = useCallback((result) => {
+        const canvas = overlayCanvasRef.current;
+        const video = cameraVideoRef.current;
+        if (!canvas || !video) return;
+
+        // Match canvas to video display size
+        const rect = video.getBoundingClientRect();
+        canvas.width = rect.width;
+        canvas.height = rect.height;
+
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (!result) return;
+
+        const drawBox = (bbox, label, color) => {
+            if (!bbox || typeof bbox !== 'object') return;
+            const sx = bbox.x * canvas.width;
+            const sy = bbox.y * canvas.height;
+            const sw = bbox.w * canvas.width;
+            const sh = bbox.h * canvas.height;
+
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.strokeRect(sx, sy, sw, sh);
+
+            // Label background
+            ctx.font = 'bold 14px sans-serif';
+            const textWidth = ctx.measureText(label).width;
+            ctx.fillStyle = color;
+            ctx.globalAlpha = 0.8;
+            ctx.fillRect(sx, sy - 22, textWidth + 10, 22);
+            ctx.globalAlpha = 1.0;
+            ctx.fillStyle = '#fff';
+            ctx.fillText(label, sx + 5, sy - 6);
+        };
+
+        const isNoDisaster = result.type === 'No Disaster';
+        const typeColor = isNoDisaster ? '#22c55e' : '#ef4444';
+        const typeLabel = `${result.type} ${result.type_confidence?.toFixed(0) || ''}%`;
+
+        drawBox(result.type_bbox, typeLabel, typeColor);
+
+        if (!isNoDisaster && result.damage_bbox) {
+            const damageLabel = `${result.damage} ${result.damage_confidence?.toFixed(0) || ''}%`;
+            drawBox(result.damage_bbox, damageLabel, '#3b82f6');
+        }
+    }, []);
+
+    // Socket listener for live frame results
+    useEffect(() => {
+        const handleLiveResult = (data) => {
+            setLiveResult(data);
+            drawLiveOverlay(data);
+        };
+        socket.on('live_frame_result', handleLiveResult);
+        return () => socket.off('live_frame_result', handleLiveResult);
+    }, [drawLiveOverlay]);
+
+    // Draw bboxes on the after-capture result preview
+    const drawResultBboxes = useCallback(() => {
+        const canvas = resultCanvasRef.current;
+        const img = resultImageRef.current;
+        if (!canvas || !img || !analysisResult) return;
+
+        canvas.width = img.clientWidth;
+        canvas.height = img.clientHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const drawBox = (bbox, label, color) => {
+            if (!bbox || typeof bbox !== 'object') return;
+            const sx = bbox.x * canvas.width;
+            const sy = bbox.y * canvas.height;
+            const sw = bbox.w * canvas.width;
+            const sh = bbox.h * canvas.height;
+
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(sx, sy, sw, sh);
+
+            ctx.font = 'bold 11px sans-serif';
+            const textWidth = ctx.measureText(label).width;
+            ctx.fillStyle = color;
+            ctx.globalAlpha = 0.8;
+            ctx.fillRect(sx, sy - 18, textWidth + 8, 18);
+            ctx.globalAlpha = 1.0;
+            ctx.fillStyle = '#fff';
+            ctx.fillText(label, sx + 4, sy - 5);
+        };
+
+        const isNoDisaster = analysisResult.type === 'No Disaster';
+        const typeColor = isNoDisaster ? '#22c55e' : '#ef4444';
+        const typeConf = typeof analysisResult.confidence === 'number' ? analysisResult.confidence.toFixed(0) : '';
+        drawBox(analysisResult.type_bbox, `${analysisResult.type} ${typeConf}%`, typeColor);
+
+        if (!isNoDisaster && analysisResult.damage_bbox) {
+            const dmgConf = typeof analysisResult.damage_confidence === 'number' ? analysisResult.damage_confidence.toFixed(0) : '';
+            drawBox(analysisResult.damage_bbox, `${analysisResult.damage} ${dmgConf}%`, '#3b82f6');
+        }
+    }, [analysisResult]);
+
+    // Re-draw result bboxes when analysis result changes or image loads
+    useEffect(() => {
+        if (step === 2 && analysisResult) {
+            // Small delay to let image render
+            const timer = setTimeout(drawResultBboxes, 200);
+            return () => clearTimeout(timer);
+        }
+    }, [step, analysisResult, drawResultBboxes]);
+
+    // Start/stop live streaming when camera opens/closes
+    useEffect(() => {
+        if (showCamera && cameraStream) {
+            // Small delay to let video element attach
+            const timer = setTimeout(() => startLiveStreaming(), 300);
+            return () => clearTimeout(timer);
+        } else {
+            stopLiveStreaming();
+        }
+    }, [showCamera, cameraStream, startLiveStreaming, stopLiveStreaming]);
+
     // Cleanup camera on unmount
     useEffect(() => {
         return () => {
@@ -322,8 +483,9 @@ const GuestDashboard = ({ onBack }) => {
             if (recordingTimerRef.current) {
                 clearInterval(recordingTimerRef.current);
             }
+            stopLiveStreaming();
         };
-    }, [cameraStream]);
+    }, [cameraStream, stopLiveStreaming]);
 
     // --- 1. HANDLE IMAGE UPLOAD & ANALYZE ---
     const handleFileSelect = (event) => {
@@ -476,7 +638,7 @@ const GuestDashboard = ({ onBack }) => {
                     {step === 1 && (
                         <div className="text-center mt-4">
                             <h1 className="text-2xl font-bold text-gray-900">Report an Incident</h1>
-                            <p className="text-gray-500 text-sm mt-1">Help emergency responders by uploading a photo.</p>
+                            <p className="text-gray-500 text-sm mt-1">Help emergency responders by uploading a photo or video.</p>
                         </div>
                     )}
 
@@ -534,14 +696,31 @@ const GuestDashboard = ({ onBack }) => {
                         {showCamera && (
                             <div className="fixed inset-0 bg-black z-[100] flex flex-col">
                                 {/* Camera preview */}
-                                <video
-                                    ref={cameraVideoRef}
-                                    autoPlay
-                                    playsInline
-                                    muted
-                                    className="flex-1 w-full object-cover"
-                                />
+                                {/* Camera preview with overlay */}
+                                <div className="relative flex-1 w-full">
+                                    <video
+                                        ref={cameraVideoRef}
+                                        autoPlay
+                                        playsInline
+                                        muted
+                                        className="absolute inset-0 w-full h-full object-cover"
+                                    />
+                                    <canvas
+                                        ref={overlayCanvasRef}
+                                        className="absolute inset-0 w-full h-full pointer-events-none z-[1]"
+                                    />
+                                </div>
                                 <canvas ref={captureCanvasRef} className="hidden" />
+
+                                {/* Live detection indicator */}
+                                {liveResult && !isRecording && (
+                                    <div className={`absolute top-6 left-6 px-3 py-2 rounded-lg z-10 text-white text-xs font-bold shadow-lg ${liveResult.type === 'No Disaster' ? 'bg-green-600/90' : 'bg-red-600/90'}`}>
+                                        <div>{liveResult.type} ({liveResult.type_confidence?.toFixed(0)}%)</div>
+                                        {liveResult.type !== 'No Disaster' && liveResult.damage && (
+                                            <div className="text-white/80 mt-0.5">{liveResult.damage} ({liveResult.damage_confidence?.toFixed(0)}%)</div>
+                                        )}
+                                    </div>
+                                )}
 
                                 {/* Recording indicator */}
                                 {isRecording && (
@@ -607,17 +786,20 @@ const GuestDashboard = ({ onBack }) => {
                                     {analysisResult?.source === 'video' ? (
         <video src={previewUrl} className="w-full h-full object-cover opacity-80" muted autoPlay loop />
     ) : (
-        <img src={previewUrl} alt="Preview" className="w-full h-full object-cover opacity-80" />
+        <>
+            <img ref={resultImageRef} src={previewUrl} alt="Preview" className="w-full h-full object-cover opacity-80" onLoad={drawResultBboxes} />
+            <canvas ref={resultCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
+        </>
     )}
                                     <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent text-white">
-                                        <div className="flex items-center gap-2"><span className="bg-red-500 px-2 py-0.5 rounded text-xs font-bold uppercase">{analysisResult.type}</span><span className="text-xs opacity-90">Confidence: {typeof analysisResult.confidence === 'number' ? `${analysisResult.confidence.toFixed(1)}%` : analysisResult.confidence}</span></div>
+                                        <div className="flex items-center gap-2"><span className={`${analysisResult.type === 'No Disaster' ? 'bg-green-500' : 'bg-red-500'} px-2 py-0.5 rounded text-xs font-bold uppercase`}>{analysisResult.type}</span><span className="text-xs opacity-90">Confidence: {typeof analysisResult.confidence === 'number' ? `${analysisResult.confidence.toFixed(1)}%` : analysisResult.confidence}</span></div>
                                         <p className="font-bold text-lg">{getDamageText(analysisResult.damage)}</p>
                                         {/* Distribution breakdown */}
                                         {analysisResult.type_distribution && (
                                             <div className="mt-2 space-y-1">
                                                 <div className="flex gap-1 h-2 rounded-full overflow-hidden bg-black/30">
                                                     {Object.entries(analysisResult.type_distribution).map(([name, pct]) => {
-                                                        const colors = { Earthquake: 'bg-amber-500', Fire: 'bg-red-500', Flood: 'bg-blue-500' };
+                                                        const colors = { Earthquake: 'bg-amber-500', Fire: 'bg-red-500', Flood: 'bg-blue-500', 'No Disaster': 'bg-green-500' };
                                                         return pct > 0 ? <div key={name} className={`${colors[name] || 'bg-gray-400'}`} style={{ width: `${pct}%` }} title={`${name}: ${pct}%`} /> : null;
                                                     })}
                                                 </div>
@@ -695,11 +877,27 @@ const GuestDashboard = ({ onBack }) => {
                         )}
 
                     </div>
-                    <div className="mt-8 text-xs text-center text-gray-400">QuickDART System &copy; 2025</div>
+
+                    {/* --- FALSE REPORTING DISCLAIMER --- */}
+                    {step === 1 && (
+                        <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                            <div className="flex items-start gap-2">
+                                <AlertTriangle size={16} className="text-amber-600 mt-0.5 flex-shrink-0" />
+                                <p className="text-xs text-amber-800 leading-relaxed">
+                                    <span className="font-bold">Disclaimer:</span> Submitting false, misleading, or fabricated disaster reports is a serious offense.
+                                    Fraudulent reports divert critical emergency resources and may endanger lives.
+                                    Violations may be subject to criminal prosecution under applicable laws.
+                                    By proceeding, you certify that all information provided is truthful and accurate to the best of your knowledge.
+                                </p>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="mt-4 text-xs text-center text-gray-400">QuickDART System &copy; 2025</div>
                 </div>
             </main>
         </div>
     );
 };
 
-export default GuestDashboard;a
+export default GuestDashboard;

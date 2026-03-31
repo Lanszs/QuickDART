@@ -1,17 +1,30 @@
-import React, { useState, useEffect } from 'react';
-import { FileText, AlertTriangle, MapPin, Calendar, Clock, XCircle, ImageIcon, Activity, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { FileText, AlertTriangle, MapPin, Calendar, Clock, XCircle, ImageIcon, Activity, CheckCircle, AlertCircle, Loader2, ChevronLeft, ChevronRight, Users, Save, Send } from 'lucide-react';
 import { toast } from 'react-toastify';
 import VideoAnalysisPlayer from './components/VideoAnalysisPlayer';
+
+const DAMAGE_OPTIONS = ['Destroyed', 'Major', 'Minor', 'No Damage'];
+const DISASTER_TYPE_OPTIONS = ['Earthquake', 'Fire', 'Flood', 'No Disaster'];
 
 const DamageReports = ({ initialHighlightId }) => {
     const [reports, setReports] = useState([]);
     const [loading, setLoading] = useState(true);
-    
+
     const [activeHighlightId, setActiveHighlightId] = useState(initialHighlightId);
 
     // Modal State
     const [selectedReport, setSelectedReport] = useState(null);
     const [showModal, setShowModal] = useState(false);
+
+    // Editable overrides
+    const [editDamage, setEditDamage] = useState('');
+    const [editDisasterType, setEditDisasterType] = useState('');
+    const [editNotes, setEditNotes] = useState('');
+
+    // Teams for assignment
+    const [teams, setTeams] = useState([]);
+    const [assignTeamId, setAssignTeamId] = useState('');
+    const [assignPersonnel, setAssignPersonnel] = useState(1);
 
     // --- SORTING CONFIGURATION ---
     const statusOrder = ['Pending', 'Active', 'Cleared'];
@@ -33,7 +46,7 @@ const DamageReports = ({ initialHighlightId }) => {
                 if (initialHighlightId) {
                     const target = data.find(r => r.id === initialHighlightId);
                     if (target) {
-                        openModal(target);// Ensure local state matches prop
+                        openModal(target);
                     }
                 }
             }
@@ -44,29 +57,37 @@ const DamageReports = ({ initialHighlightId }) => {
         }
     };
 
-    // Update whenever the prop changes (e.g. redirected from Dashboard again)
+    const fetchTeams = async () => {
+        try {
+            const response = await fetch('http://127.0.0.1:5000/api/v1/resources');
+            if (response.ok) {
+                const data = await response.json();
+                setTeams(data.teams || []);
+            }
+        } catch (error) {
+            console.error("Error fetching teams:", error);
+        }
+    };
+
     useEffect(() => {
         setActiveHighlightId(initialHighlightId);
         fetchReports();
+        fetchTeams();
     }, [initialHighlightId]);
 
     // Handle Status Change
     const updateReportStatus = async (newStatus) => {
         if (!selectedReport) return;
-
         try {
             const response = await fetch(`http://127.0.0.1:5000/api/v1/reports/${selectedReport.id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: newStatus }) // Only updating status
+                body: JSON.stringify({ status: newStatus })
             });
-
             if (response.ok) {
                 const updated = await response.json();
                 toast.success(`Status updated to ${newStatus}`);
-                
-                // Update local state immediately
-                setSelectedReport(updated); 
+                setSelectedReport(updated);
                 setReports(prev => prev.map(r => r.id === updated.id ? updated : r));
             } else {
                 toast.error("Failed to update status");
@@ -77,10 +98,119 @@ const DamageReports = ({ initialHighlightId }) => {
         }
     };
 
+    // Save editable fields (damage, type, notes)
+    const saveReportOverrides = async () => {
+        if (!selectedReport) return;
+        const payload = {};
+        if (editDamage && editDamage !== selectedReport.damage_level) payload.damage_level = editDamage;
+        if (editDisasterType && editDisasterType !== selectedReport.disaster_type) payload.disaster_type = editDisasterType;
+        if (editNotes !== (selectedReport.notes || '')) payload.notes = editNotes;
+
+        if (Object.keys(payload).length === 0) {
+            toast.info("No changes to save");
+            return;
+        }
+
+        try {
+            const response = await fetch(`http://127.0.0.1:5000/api/v1/reports/${selectedReport.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (response.ok) {
+                const updated = await response.json();
+                toast.success("Report updated");
+                setSelectedReport(updated);
+                setReports(prev => prev.map(r => r.id === updated.id ? updated : r));
+            } else {
+                toast.error("Failed to save changes");
+            }
+        } catch (error) {
+            toast.error("Network error");
+        }
+    };
+
+    // Admin assign report to team
+    const handleAssignTeam = async () => {
+        if (!assignTeamId || !selectedReport) return;
+        const team = teams.find(t => t.id === parseInt(assignTeamId));
+        if (!team) return;
+
+        try {
+            const response = await fetch(`http://127.0.0.1:5000/api/v1/teams/${assignTeamId}/deployments`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    report_id: selectedReport.id,
+                    personnel_count: assignPersonnel,
+                    task: `Assigned by Admin: ${selectedReport.title}`
+                })
+            });
+            if (response.ok) {
+                toast.success(`Assigned to ${team.name}`);
+                setAssignTeamId('');
+                setAssignPersonnel(1);
+                fetchReports();
+                fetchTeams();
+                // Refresh selected report
+                const rr = await fetch(`http://127.0.0.1:5000/api/v1/reports`);
+                if (rr.ok) {
+                    const allReports = await rr.json();
+                    const fresh = allReports.find(r => r.id === selectedReport.id);
+                    if (fresh) setSelectedReport(fresh);
+                    setReports(allReports);
+                }
+            } else {
+                const err = await response.json();
+                toast.error(err.error || "Failed to assign team");
+            }
+        } catch (error) {
+            toast.error("Network error");
+        }
+    };
+
+    // Get flat sorted list for prev/next navigation
+    const getSortedReportList = useCallback(() => {
+        const result = [];
+        statusOrder.forEach(status => {
+            const items = reports.filter(r => r.status === status);
+            items.sort((a, b) => (damageWeight[b.damage_level] || 0) - (damageWeight[a.damage_level] || 0));
+            result.push(...items);
+        });
+        return result;
+    }, [reports]);
+
+    const navigateReport = (direction) => {
+        if (!selectedReport) return;
+        const sorted = getSortedReportList();
+        const currentIdx = sorted.findIndex(r => r.id === selectedReport.id);
+        if (currentIdx === -1) return;
+        const newIdx = currentIdx + direction;
+        if (newIdx >= 0 && newIdx < sorted.length) {
+            openModal(sorted[newIdx]);
+        }
+    };
+
+    // Keyboard nav for prev/next
+    useEffect(() => {
+        if (!showModal) return;
+        const handler = (e) => {
+            if (e.key === 'ArrowLeft') navigateReport(-1);
+            if (e.key === 'ArrowRight') navigateReport(1);
+        };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    }, [showModal, selectedReport, reports]);
+
     const openModal = (report) => {
         setSelectedReport(report);
         setShowModal(true);
         setActiveHighlightId(report.id);
+        setEditDamage(report.damage_level || '');
+        setEditDisasterType(report.disaster_type || '');
+        setEditNotes(report.notes || '');
+        setAssignTeamId('');
+        setAssignPersonnel(1);
     };
 
     const closeModal = () => {
@@ -191,25 +321,47 @@ const DamageReports = ({ initialHighlightId }) => {
             })}
 
             {/* DETAILED MODAL */}
-            {showModal && selectedReport && (
+            {showModal && selectedReport && (() => {
+                const sorted = getSortedReportList();
+                const currentIdx = sorted.findIndex(r => r.id === selectedReport.id);
+                const hasPrev = currentIdx > 0;
+                const hasNext = currentIdx < sorted.length - 1;
+                const claimedTeam = selectedReport.claimed_by_team_id ? teams.find(t => t.id === selectedReport.claimed_by_team_id) : null;
+
+                return (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
                     <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden flex flex-col max-h-[90vh]">
-                        
-                        {/* Header */}
+
+                        {/* Header with prev/next */}
                         <div className="p-6 border-b border-gray-100 flex justify-between items-start bg-gray-50">
-                            <div>
-                                <h3 className="text-xl font-bold text-gray-900">{selectedReport.title}</h3>
-                                <p className="text-sm text-gray-500 flex items-center gap-2 mt-1"><MapPin size={14} /> {selectedReport.location}</p>
+                            <div className="flex items-center gap-3">
+                                <button onClick={() => navigateReport(-1)} disabled={!hasPrev} className={`p-1.5 rounded-lg border transition-colors ${hasPrev ? 'hover:bg-gray-200 text-gray-600 border-gray-300' : 'text-gray-300 border-gray-200 cursor-not-allowed'}`} title="Previous report (Left arrow)">
+                                    <ChevronLeft size={18} />
+                                </button>
+                                <div>
+                                    <h3 className="text-xl font-bold text-gray-900">{selectedReport.title}</h3>
+                                    <p className="text-sm text-gray-500 flex items-center gap-2 mt-1"><MapPin size={14} /> {selectedReport.location}</p>
+                                    {claimedTeam && (
+                                        <span className="text-xs font-bold text-white bg-blue-600 px-2 py-0.5 rounded-full mt-1 inline-flex items-center gap-1">
+                                            <Users size={10} /> {claimedTeam.name}
+                                        </span>
+                                    )}
+                                </div>
+                                <button onClick={() => navigateReport(1)} disabled={!hasNext} className={`p-1.5 rounded-lg border transition-colors ${hasNext ? 'hover:bg-gray-200 text-gray-600 border-gray-300' : 'text-gray-300 border-gray-200 cursor-not-allowed'}`} title="Next report (Right arrow)">
+                                    <ChevronRight size={18} />
+                                </button>
                             </div>
-                            <button onClick={closeModal} className="text-gray-400 hover:text-gray-600 bg-white rounded-full p-1 hover:bg-gray-200 transition-colors">
-                                <XCircle size={28} />
-                            </button>
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs text-gray-400">{currentIdx + 1}/{sorted.length}</span>
+                                <button onClick={closeModal} className="text-gray-400 hover:text-gray-600 bg-white rounded-full p-1 hover:bg-gray-200 transition-colors">
+                                    <XCircle size={28} />
+                                </button>
+                            </div>
                         </div>
 
                         {/* Content */}
                         <div className="p-6 overflow-y-auto">
                             {/* 1. Image or Video with AI Overlay */}
-                            {(() => { console.log('[DamageReports] selectedReport.analysis_metadata:', selectedReport.analysis_metadata); return null; })()}
 <div className="mb-6">
     <div className="w-full h-64 bg-gray-100 rounded-xl border border-gray-200 flex items-center justify-center overflow-hidden relative">
         {selectedReport.image_url ? (
@@ -222,20 +374,12 @@ const DamageReports = ({ initialHighlightId }) => {
                         totalFrames={selectedReport.analysis_metadata.total_analyzed_frames || selectedReport.analysis_metadata.per_frame_predictions.length}
                     />
                 ) : (
-                    <video
-                        src={selectedReport.image_url}
-                        controls
-                        className="w-full h-full object-cover"
-                    >
+                    <video src={selectedReport.image_url} controls className="w-full h-full object-cover">
                         Your browser does not support video playback.
                     </video>
                 )
             ) : (
-                <img
-                    src={selectedReport.image_url}
-                    alt="Incident"
-                    className="w-full h-full object-cover"
-                />
+                <img src={selectedReport.image_url} alt="Incident" className="w-full h-full object-cover" />
             )
         ) : (
             <div className="text-center text-gray-400 flex flex-col items-center">
@@ -243,17 +387,16 @@ const DamageReports = ({ initialHighlightId }) => {
                 <span className="text-sm">No image provided</span>
             </div>
         )}
-        {/* Overlay Damage Level */}
         <div className="absolute top-4 right-4 px-3 py-1 bg-black/70 backdrop-blur-md rounded-lg text-white text-xs font-bold border border-white/20 shadow-lg z-30">
             AI: {selectedReport.damage_level}
         </div>
     </div>
 </div>
 
-                            {/* 2. Status Dropdown (The Feature You Requested) */}
+                            {/* 2. Status Dropdown */}
                             <div className="mb-6 bg-blue-50 p-4 rounded-xl border border-blue-100 flex items-center justify-between">
                                 <label className="text-sm font-bold text-blue-900">Current Incident Status:</label>
-                                <select 
+                                <select
                                     value={selectedReport.status}
                                     onChange={(e) => updateReportStatus(e.target.value)}
                                     className="bg-white border border-blue-300 text-blue-800 text-sm font-bold rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 cursor-pointer hover:bg-blue-50 transition-colors"
@@ -264,23 +407,27 @@ const DamageReports = ({ initialHighlightId }) => {
                                 </select>
                             </div>
 
-                            {/* 3. Info Grid */}
+                            {/* 3. Editable Info Grid */}
                             <div className="grid grid-cols-2 gap-6">
                                 <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
                                     <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Disaster Type</label>
-                                    <div className="flex items-center gap-2">
-                                        <Activity className="text-orange-500" size={20} />
-                                        <span className="text-lg font-bold text-gray-800">{selectedReport.disaster_type || "Unknown"}</span>
-                                    </div>
+                                    <select
+                                        value={editDisasterType}
+                                        onChange={(e) => setEditDisasterType(e.target.value)}
+                                        className="w-full p-2 border border-gray-300 rounded-lg text-sm font-bold text-gray-800 bg-white cursor-pointer"
+                                    >
+                                        {DISASTER_TYPE_OPTIONS.map(opt => (
+                                            <option key={opt} value={opt}>{opt}</option>
+                                        ))}
+                                    </select>
                                     {selectedReport.confidence && (
-                                        <span className="text-xs text-gray-500 mt-1 block">Confidence: {typeof selectedReport.confidence === 'number' ? `${selectedReport.confidence.toFixed(1)}%` : selectedReport.confidence}</span>
+                                        <span className="text-xs text-gray-500 mt-1 block">AI Confidence: {typeof selectedReport.confidence === 'number' ? `${selectedReport.confidence.toFixed(1)}%` : selectedReport.confidence} <span className="text-[10px] text-gray-400">(AI)</span></span>
                                     )}
-                                    {/* Type Distribution Bar */}
                                     {selectedReport.analysis_metadata?.type_distribution && (
                                         <div className="mt-2 space-y-1">
                                             <div className="flex gap-0.5 h-2 rounded-full overflow-hidden bg-gray-200">
                                                 {Object.entries(selectedReport.analysis_metadata.type_distribution).map(([name, pct]) => {
-                                                    const colors = { Earthquake: 'bg-amber-500', Fire: 'bg-red-500', Flood: 'bg-blue-500' };
+                                                    const colors = { Earthquake: 'bg-amber-500', Fire: 'bg-red-500', Flood: 'bg-blue-500', 'No Disaster': 'bg-green-500' };
                                                     return pct > 0 ? <div key={name} className={`${colors[name] || 'bg-gray-400'}`} style={{ width: `${pct}%` }} title={`${name}: ${pct}%`} /> : null;
                                                 })}
                                             </div>
@@ -294,11 +441,15 @@ const DamageReports = ({ initialHighlightId }) => {
                                 </div>
                                 <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
                                     <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Assessed Damage</label>
-                                    <div className="flex items-center gap-2">
-                                        <AlertTriangle className={getDamageColor(selectedReport.damage_level).split(' ')[0]} size={20} />
-                                        <span className={`text-lg font-bold ${getDamageColor(selectedReport.damage_level).split(' ')[0]}`}>{selectedReport.damage_level || "Pending"}</span>
-                                    </div>
-                                    {/* Damage Distribution Bar */}
+                                    <select
+                                        value={editDamage}
+                                        onChange={(e) => setEditDamage(e.target.value)}
+                                        className={`w-full p-2 border border-gray-300 rounded-lg text-sm font-bold bg-white cursor-pointer ${getDamageColor(editDamage).split(' ')[0]}`}
+                                    >
+                                        {DAMAGE_OPTIONS.map(opt => (
+                                            <option key={opt} value={opt}>{opt}</option>
+                                        ))}
+                                    </select>
                                     {selectedReport.analysis_metadata?.damage_distribution && (
                                         <div className="mt-2 space-y-1">
                                             <div className="flex gap-0.5 h-2 rounded-full overflow-hidden bg-gray-200">
@@ -316,6 +467,50 @@ const DamageReports = ({ initialHighlightId }) => {
                                     )}
                                 </div>
                             </div>
+
+                            {/* Save overrides button */}
+                            <div className="flex justify-end mt-3">
+                                <button onClick={saveReportOverrides} className="flex items-center gap-1.5 bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors">
+                                    <Save size={14} /> Save Changes
+                                </button>
+                            </div>
+
+                            {/* Admin Assign to Team */}
+                            <div className="mt-4 bg-yellow-50 p-4 rounded-xl border border-yellow-200">
+                                <label className="block text-xs font-bold text-yellow-800 uppercase tracking-wider mb-2 flex items-center gap-1"><Users size={12} /> Assign to Team</label>
+                                <div className="flex gap-2 items-end">
+                                    <div className="flex-1">
+                                        <select
+                                            value={assignTeamId}
+                                            onChange={(e) => {
+                                                setAssignTeamId(e.target.value);
+                                                const t = teams.find(t => t.id === parseInt(e.target.value));
+                                                if (t) setAssignPersonnel(Math.min(3, t.available_personnel ?? t.personnel_count));
+                                            }}
+                                            className="w-full p-2 border border-yellow-300 rounded-lg text-sm bg-white"
+                                        >
+                                            <option value="">Select team...</option>
+                                            {teams.map(t => {
+                                                const avail = t.available_personnel ?? t.personnel_count;
+                                                return (
+                                                    <option key={t.id} value={t.id} disabled={avail === 0}>
+                                                        {t.name} ({t.department}) — {avail} available
+                                                    </option>
+                                                );
+                                            })}
+                                        </select>
+                                    </div>
+                                    <div className="w-20">
+                                        <label className="block text-[10px] text-yellow-700 mb-0.5">Pax</label>
+                                        <input type="number" min={1} max={assignTeamId ? (teams.find(t => t.id === parseInt(assignTeamId))?.available_personnel || 1) : 1} value={assignPersonnel} onChange={(e) => setAssignPersonnel(parseInt(e.target.value) || 1)} className="w-full p-2 border border-yellow-300 rounded-lg text-sm" />
+                                    </div>
+                                    <button onClick={handleAssignTeam} disabled={!assignTeamId} className={`flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-bold transition-colors ${assignTeamId ? 'bg-yellow-600 text-white hover:bg-yellow-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
+                                        <Send size={12} /> Assign
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Time */}
                             <div className="grid grid-cols-1 gap-6 mt-4">
                                 <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
                                     <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Time of Report</label>
@@ -331,10 +526,28 @@ const DamageReports = ({ initialHighlightId }) => {
                                 <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">AI Analysis / Description</label>
                                 <div className="p-4 bg-gray-50 rounded-xl border border-gray-200 text-gray-700 text-sm leading-relaxed">{selectedReport.description}</div>
                             </div>
+
+                            {/* 5. Operator Notes */}
+                            <div className="mt-4">
+                                <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Operator Notes</label>
+                                <textarea
+                                    value={editNotes}
+                                    onChange={(e) => setEditNotes(e.target.value)}
+                                    placeholder="Add notes about this incident..."
+                                    rows={3}
+                                    className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200 text-gray-700 text-sm leading-relaxed focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none resize-none"
+                                />
+                                <div className="flex justify-end mt-2">
+                                    <button onClick={saveReportOverrides} className="flex items-center gap-1.5 bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-green-700 transition-colors">
+                                        <Save size={14} /> Save Notes
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
-            )}
+                );
+            })()}
         </div>
     );
 };

@@ -21,7 +21,7 @@ from flask_socketio import SocketIO, emit
 from models.user import authenticate_user, User
 from models.database import SessionLocal, engine
 from models.report import Report
-from models.resources import Asset, Team
+from models.resources import Asset, Team, Deployment
 
 import io
 import torch
@@ -53,7 +53,7 @@ CORS(app, resources={r"/*": {"origins": "*"}}) # Allow all origins to fix image 
 
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-TYPE_CLASS_NAMES = ['Earthquake', 'Fire', 'Flood']
+TYPE_CLASS_NAMES = ['Earthquake', 'Fire', 'Flood', 'No Disaster']
 DAMAGE_CLASS_NAMES = ['Destroyed', 'Major', 'Minor', 'No Damage']
 
 
@@ -77,31 +77,90 @@ def load_model(path, num_classes):
 # Robust path finding (Works whether you run from root or backend folder)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TYPE_MODEL_PATH = os.path.join(BASE_DIR, 'ml_engine', 'disaster_type_model.pth')
-DAMAGE_MODEL_PATH = os.path.join(BASE_DIR, 'ml_engine', 'damage_assessment_model.pth')
+DAMAGE_EQ_MODEL_PATH = os.path.join(BASE_DIR, 'ml_engine', 'damage_earthquake_model.pth')
+DAMAGE_FIRE_MODEL_PATH = os.path.join(BASE_DIR, 'ml_engine', 'damage_fire_model.pth')
+DAMAGE_FLOOD_MODEL_PATH = os.path.join(BASE_DIR, 'ml_engine', 'damage_flood_model.pth')
 
 # --- AUTO-MIGRATION: Add missing columns to reports table ---
 def run_migrations():
-    """Adds new columns if they don't exist. Non-destructive."""
+    """Adds new columns/tables if they don't exist. Non-destructive."""
     from sqlalchemy import text, inspect
     try:
         inspector = inspect(engine)
-        existing_columns = [col['name'] for col in inspector.get_columns('reports')]
-        print(f"--- DB columns in 'reports': {existing_columns}")
 
-        migrations = {
+        # --- Reports table migrations ---
+        report_cols = [col['name'] for col in inspector.get_columns('reports')]
+        print(f"--- DB columns in 'reports': {report_cols}")
+
+        report_migrations = {
             'disaster_type': "ALTER TABLE reports ADD COLUMN disaster_type VARCHAR",
             'confidence': "ALTER TABLE reports ADD COLUMN confidence FLOAT",
             'analysis_metadata': "ALTER TABLE reports ADD COLUMN analysis_metadata TEXT",
+            'claimed_by_team_id': "ALTER TABLE reports ADD COLUMN claimed_by_team_id INTEGER REFERENCES teams(id)",
+            'notes': "ALTER TABLE reports ADD COLUMN notes TEXT",
         }
 
         with engine.connect() as conn:
-            for col_name, sql in migrations.items():
-                if col_name not in existing_columns:
+            for col_name, sql in report_migrations.items():
+                if col_name not in report_cols:
                     conn.execute(text(sql))
                     conn.commit()
-                    print(f"   + Added column: {col_name}")
-                else:
-                    print(f"   = Column exists: {col_name}")
+                    print(f"   + Added column to reports: {col_name}")
+
+            # --- Teams table migrations ---
+            team_cols = [col['name'] for col in inspector.get_columns('teams')]
+            if 'available_personnel' not in team_cols:
+                conn.execute(text("ALTER TABLE teams ADD COLUMN available_personnel INTEGER"))
+                conn.commit()
+                conn.execute(text("UPDATE teams SET available_personnel = personnel_count WHERE available_personnel IS NULL"))
+                conn.commit()
+                print(f"   + Added column to teams: available_personnel (backfilled)")
+
+            # --- Assets table migrations ---
+            asset_cols = [col['name'] for col in inspector.get_columns('assets')]
+            if 'deployment_id' not in asset_cols:
+                conn.execute(text("ALTER TABLE assets ADD COLUMN deployment_id INTEGER"))
+                conn.commit()
+                print(f"   + Added column to assets: deployment_id")
+
+            # --- Deployments table ---
+            existing_tables = inspector.get_table_names()
+            if 'deployments' not in existing_tables:
+                conn.execute(text("""
+                    CREATE TABLE deployments (
+                        id SERIAL PRIMARY KEY,
+                        team_id INTEGER NOT NULL REFERENCES teams(id),
+                        report_id INTEGER NOT NULL REFERENCES reports(id),
+                        personnel_count INTEGER NOT NULL,
+                        task VARCHAR,
+                        status VARCHAR DEFAULT 'Active',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        completed_at TIMESTAMP
+                    )
+                """))
+                conn.commit()
+                print(f"   + Created table: deployments")
+
+                # Backfill: create Deployment rows for any currently deployed teams
+                conn.execute(text("""
+                    INSERT INTO deployments (team_id, report_id, personnel_count, task, status, created_at)
+                    SELECT id, current_report_id, personnel_count, current_task, 'Active', CURRENT_TIMESTAMP
+                    FROM teams
+                    WHERE status = 'Deployed' AND current_report_id IS NOT NULL
+                """))
+                # Mark those reports as claimed
+                conn.execute(text("""
+                    UPDATE reports SET claimed_by_team_id = t.id
+                    FROM teams t
+                    WHERE reports.id = t.current_report_id AND t.status = 'Deployed'
+                """))
+                # Set available_personnel = 0 for deployed teams (they had full deployment)
+                conn.execute(text("""
+                    UPDATE teams SET available_personnel = 0
+                    WHERE status = 'Deployed' AND current_report_id IS NOT NULL
+                """))
+                conn.commit()
+                print(f"   + Backfilled deployments for currently deployed teams")
 
         print("--- DB migration check complete ---")
     except Exception as e:
@@ -111,11 +170,28 @@ run_migrations()
 
 print("--- Loading AI Models ---")
 type_model = load_model(TYPE_MODEL_PATH, len(TYPE_CLASS_NAMES))
-damage_model = load_model(DAMAGE_MODEL_PATH, len(DAMAGE_CLASS_NAMES))
+damage_eq_model = load_model(DAMAGE_EQ_MODEL_PATH, len(DAMAGE_CLASS_NAMES))
+damage_fire_model = load_model(DAMAGE_FIRE_MODEL_PATH, len(DAMAGE_CLASS_NAMES))
+damage_flood_model = load_model(DAMAGE_FLOOD_MODEL_PATH, len(DAMAGE_CLASS_NAMES))
 
-# Initialize Grad-CAM for both models
+# Map disaster types to their damage models
+damage_models = {
+    'Earthquake': damage_eq_model,
+    'Fire': damage_fire_model,
+    'Flood': damage_flood_model,
+}
+
+# Initialize Grad-CAM for type model and each damage model
 type_gradcam = GradCAM(type_model, "layer4") if type_model else None
-damage_gradcam = GradCAM(damage_model, "layer4") if damage_model else None
+damage_eq_gradcam = GradCAM(damage_eq_model, "layer4") if damage_eq_model else None
+damage_fire_gradcam = GradCAM(damage_fire_model, "layer4") if damage_fire_model else None
+damage_flood_gradcam = GradCAM(damage_flood_model, "layer4") if damage_flood_model else None
+
+damage_gradcams = {
+    'Earthquake': damage_eq_gradcam,
+    'Fire': damage_fire_gradcam,
+    'Flood': damage_flood_gradcam,
+}
 print("--- Grad-CAM initialized ---")
 
 # Image Preprocessing
@@ -218,21 +294,21 @@ def deploy_team(team_id):
         print(f"📝 New status: {new_status}")
         print(f"📋 Task Orders: {new_task}")
 
-        if new_status not in ['Deployed', 'Idle', 'Resting']:
-            print(f"❌ Invalid status: {new_status}")
-            return jsonify({"error": "Invalid status"}), 400
-        
+        if new_status not in ['Idle', 'Resting']:
+            print(f"❌ Invalid status: {new_status} (use POST /deployments for deploying)")
+            return jsonify({"error": "Invalid status. Use deployment endpoint to deploy."}), 400
+
+        # Check no active deployments before going Idle/Resting
+        active_deps = session.query(Deployment).filter(
+            Deployment.team_id == team_id, Deployment.status == 'Active'
+        ).count()
+        if active_deps > 0 and new_status == 'Idle':
+            return jsonify({"error": "Cannot go Idle while active deployments exist. Complete missions first."}), 400
+
         old_status = team.status
         team.status = new_status
-        
-        # --- NEW LOGIC: Update the Task ---
-        if new_status == 'Deployed':
-            team.current_task = new_task  # Save the orders
-            team.current_report_id = new_report_id
-        else:
-            team.current_task = None      # Clear orders if recalled/resting
-            team.current_report_id = None
-        # ----------------------------------
+        team.current_task = None
+        team.current_report_id = None
         
         session.commit()
         session.refresh(team)
@@ -257,6 +333,191 @@ def deploy_team(team_id):
         import traceback
         traceback.print_exc()
         print(f"{'='*50}\n")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+# --- DEPLOYMENT MANAGEMENT ROUTES ---
+@app.route('/api/v1/teams/<int:team_id>/deployments', methods=['GET', 'POST'])
+def team_deployments(team_id):
+    """GET: list deployments. POST: claim report + deploy personnel."""
+    session = SessionLocal()
+    try:
+        if request.method == 'GET':
+            status_filter = request.args.get('status')
+            query = session.query(Deployment).filter(Deployment.team_id == team_id)
+            if status_filter:
+                query = query.filter(Deployment.status == status_filter)
+            deps = query.order_by(Deployment.created_at.desc()).all()
+            return jsonify([d.to_dict() for d in deps]), 200
+
+        # --- POST: Claim + Deploy (atomic) ---
+        data = request.get_json()
+        report_id = data.get('report_id')
+        personnel_count = data.get('personnel_count', 0)
+        task = data.get('task', '')
+        asset_ids = data.get('asset_ids', [])
+
+        print(f"\n{'='*50}")
+        print(f" DEPLOYMENT REQUEST - Team {team_id} -> Report {report_id}")
+        print(f" Personnel: {personnel_count}, Assets: {asset_ids}")
+
+        if not report_id or personnel_count <= 0:
+            return jsonify({"error": "report_id and personnel_count > 0 required"}), 400
+
+        # Atomic claim + deploy with row-level locking
+        report = session.query(Report).filter(Report.id == report_id).with_for_update().first()
+        if not report:
+            return jsonify({"error": "Report not found"}), 404
+
+        if report.claimed_by_team_id is not None and report.claimed_by_team_id != team_id:
+            return jsonify({"error": "Report already claimed by another team"}), 409
+
+        team = session.query(Team).filter(Team.id == team_id).with_for_update().first()
+        if not team:
+            return jsonify({"error": "Team not found"}), 404
+
+        avail = team.available_personnel if team.available_personnel is not None else team.personnel_count
+        if avail < personnel_count:
+            return jsonify({"error": f"Insufficient personnel. Available: {avail}, Requested: {personnel_count}"}), 400
+
+        # Claim the report
+        report.claimed_by_team_id = team_id
+
+        # Create deployment
+        from datetime import datetime
+        dep = Deployment(
+            team_id=team_id,
+            report_id=report_id,
+            personnel_count=personnel_count,
+            task=task,
+            status='Active',
+            created_at=datetime.utcnow()
+        )
+        session.add(dep)
+        session.flush()  # Get dep.id
+
+        # Update team
+        team.available_personnel = avail - personnel_count
+        team.status = 'Deployed'
+        team.current_task = task  # Legacy compat
+        team.current_report_id = report_id
+
+        # Deploy selected assets
+        if asset_ids:
+            assets = session.query(Asset).filter(Asset.id.in_(asset_ids), Asset.team_id == team_id).all()
+            for asset in assets:
+                asset.status = 'Deployed'
+                asset.deployment_id = dep.id
+                asset.location = report.location or 'Field'
+
+        session.commit()
+        session.refresh(dep)
+        session.refresh(team)
+        session.refresh(report)
+
+        print(f" Deployment #{dep.id} created. Available personnel: {team.available_personnel}")
+        print(f"{'='*50}\n")
+
+        # Broadcast
+        socketio.emit('report_claimed', {
+            'report_id': report_id,
+            'claimed_by_team_id': team_id,
+            'team_name': team.name
+        })
+        socketio.emit('resource_updated', {
+            'type': 'team', 'action': 'deployed', 'data': team.to_dict()
+        })
+        socketio.emit('report_updated', report.to_dict())
+
+        return jsonify({
+            "deployment": dep.to_dict(),
+            "team": team.to_dict(),
+            "report": report.to_dict()
+        }), 201
+
+    except Exception as e:
+        session.rollback()
+        print(f" DEPLOYMENT ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/v1/deployments/<int:deployment_id>/complete', methods=['PUT'])
+def complete_deployment(deployment_id):
+    """Complete a specific deployment — returns personnel + assets."""
+    session = SessionLocal()
+    try:
+        dep = session.query(Deployment).filter(Deployment.id == deployment_id).with_for_update().first()
+        if not dep:
+            return jsonify({"error": "Deployment not found"}), 404
+        if dep.status != 'Active':
+            return jsonify({"error": "Deployment already completed"}), 400
+
+        from datetime import datetime
+        dep.status = 'Completed'
+        dep.completed_at = datetime.utcnow()
+
+        # Return personnel
+        team = session.query(Team).filter(Team.id == dep.team_id).with_for_update().first()
+        avail = team.available_personnel if team.available_personnel is not None else 0
+        team.available_personnel = avail + dep.personnel_count
+
+        # Clear report
+        report = session.query(Report).filter(Report.id == dep.report_id).first()
+        if report:
+            report.status = 'Cleared'
+
+        # Release assets from this deployment
+        deployed_assets = session.query(Asset).filter(Asset.deployment_id == deployment_id).all()
+        for asset in deployed_assets:
+            asset.status = 'Available'
+            asset.deployment_id = None
+            asset.location = 'Base'
+
+        # Check if team has any remaining active deployments
+        remaining = session.query(Deployment).filter(
+            Deployment.team_id == dep.team_id,
+            Deployment.status == 'Active',
+            Deployment.id != deployment_id
+        ).count()
+
+        if remaining == 0:
+            team.status = 'Idle'
+            team.current_task = None
+            team.current_report_id = None
+
+        session.commit()
+        session.refresh(team)
+
+        print(f" Deployment #{deployment_id} completed. Team {team.name}: {team.available_personnel}/{team.personnel_count} available")
+
+        # Broadcast updates
+        if report:
+            socketio.emit('report_updated', report.to_dict())
+        socketio.emit('resource_updated', {
+            'type': 'team', 'action': 'deployment_completed', 'data': team.to_dict()
+        })
+        socketio.emit('deployment_completed', {
+            'deployment_id': deployment_id,
+            'team_id': dep.team_id,
+            'report_id': dep.report_id
+        })
+
+        return jsonify({
+            "deployment": dep.to_dict(),
+            "team": team.to_dict()
+        }), 200
+
+    except Exception as e:
+        session.rollback()
+        print(f" COMPLETE DEPLOYMENT ERROR: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
     finally:
         session.close()
@@ -455,35 +716,67 @@ def predict_from_frames(frames, sid=None):
             type_votes.append(type_pred.item())
             type_confidences.append(type_conf.item() * 100)
 
-            # Damage Level
-            damage_outputs = damage_model(tensor)
-            damage_probs = torch.nn.functional.softmax(damage_outputs, dim=1)
-            damage_conf, damage_pred = torch.max(damage_probs, 1)
-            damage_votes.append(damage_pred.item())
-            damage_confidences.append(damage_conf.item() * 100)
+            # Damage Level — skip if "No Disaster"
+            detected_type = TYPE_CLASS_NAMES[type_pred.item()]
+            is_no_disaster = detected_type == 'No Disaster'
+            if is_no_disaster:
+                damage_votes.append(-1)
+                damage_confidences.append(0.0)
+            else:
+                frame_damage_model = damage_models.get(detected_type)
+                if frame_damage_model:
+                    damage_outputs = frame_damage_model(tensor)
+                    damage_probs = torch.nn.functional.softmax(damage_outputs, dim=1)
+                    damage_conf, damage_pred = torch.max(damage_probs, 1)
+                    damage_votes.append(damage_pred.item())
+                    damage_confidences.append(damage_conf.item() * 100)
+                else:
+                    damage_votes.append(-1)
+                    damage_confidences.append(0.0)
 
         # Compute Grad-CAM bounding boxes for this frame
         gradcam_data = {}
-        if type_gradcam and damage_gradcam:
-            try:
-                gradcam_data = compute_gradcam_for_frame(
-                    type_model, damage_model, tensor,
-                    type_gradcam, damage_gradcam
-                )
-                print(f"  [Grad-CAM] Frame {i}: type_bbox={gradcam_data.get('type_bbox')}, damage_bbox={gradcam_data.get('damage_bbox')}", flush=True)
-            except Exception as e:
-                import traceback
-                print(f"  [Grad-CAM] ERROR on frame {i}: {e}", flush=True)
-                traceback.print_exc()
+        if is_no_disaster:
+            # Only compute type Grad-CAM, skip damage
+            if type_gradcam:
+                try:
+                    type_heatmap, _ = type_gradcam.compute_heatmap(tensor)
+                    from gradcam import heatmap_to_bbox
+                    import numpy as np
+                    gradcam_data = {
+                        "type_bbox": heatmap_to_bbox(type_heatmap),
+                        "damage_bbox": None,
+                        "damage_bboxes": [],
+                        "type_heatmap": np.round(type_heatmap, 3).tolist(),
+                        "damage_heatmap": None
+                    }
+                except Exception as e:
+                    print(f"  [Grad-CAM] ERROR on frame {i}: {e}", flush=True)
+        elif type_gradcam:
+            frame_damage_gradcam = damage_gradcams.get(detected_type)
+            if frame_damage_gradcam:
+                try:
+                    frame_damage_model = damage_models.get(detected_type)
+                    gradcam_data = compute_gradcam_for_frame(
+                        type_model, frame_damage_model, tensor,
+                        type_gradcam, frame_damage_gradcam
+                    )
+                    print(f"  [Grad-CAM] Frame {i}: type_bbox={gradcam_data.get('type_bbox')}, damage_bbox={gradcam_data.get('damage_bbox')}", flush=True)
+                except Exception as e:
+                    import traceback
+                    print(f"  [Grad-CAM] ERROR on frame {i}: {e}", flush=True)
+                    traceback.print_exc()
+            else:
+                print(f"  [Grad-CAM] SKIPPED frame {i}: no damage gradcam for type={detected_type}", flush=True)
         else:
-            print(f"  [Grad-CAM] SKIPPED frame {i}: type_gradcam={type_gradcam is not None}, damage_gradcam={damage_gradcam is not None}", flush=True)
+            print(f"  [Grad-CAM] SKIPPED frame {i}: type_gradcam={type_gradcam is not None}", flush=True)
 
         per_frame_predictions.append({
             "frame_index": i,
             "type": TYPE_CLASS_NAMES[type_pred.item()],
             "type_conf": round(type_conf.item() * 100, 2),
-            "damage": DAMAGE_CLASS_NAMES[damage_pred.item()],
-            "damage_conf": round(damage_conf.item() * 100, 2),
+            "damage": "No Damage" if (is_no_disaster or damage_votes[-1] == -1) else DAMAGE_CLASS_NAMES[damage_pred.item()],
+            "damage_conf": 0.0 if (is_no_disaster or damage_votes[-1] == -1) else round(damage_conf.item() * 100, 2),
             "type_bbox": gradcam_data.get("type_bbox"),
             "damage_bbox": gradcam_data.get("damage_bbox"),
             "damage_bboxes": gradcam_data.get("damage_bboxes", []),
@@ -493,14 +786,24 @@ def predict_from_frames(frames, sid=None):
 
     # Majority vote for final classification
     final_type_idx = max(set(type_votes), key=type_votes.count)
-    final_damage_idx = max(set(damage_votes), key=damage_votes.count)
+    is_final_no_disaster = TYPE_CLASS_NAMES[final_type_idx] == 'No Disaster'
 
     # Average confidence only for frames that voted for the winning class
     winning_type_confs = [c for c, v in zip(type_confidences, type_votes) if v == final_type_idx]
     avg_type_confidence = sum(winning_type_confs) / len(winning_type_confs)
 
-    winning_damage_confs = [c for c, v in zip(damage_confidences, damage_votes) if v == final_damage_idx]
-    avg_damage_confidence = sum(winning_damage_confs) / len(winning_damage_confs)
+    if is_final_no_disaster:
+        final_damage_idx = -1
+        avg_damage_confidence = 0.0
+    else:
+        valid_damage_votes = [v for v in damage_votes if v != -1]
+        if valid_damage_votes:
+            final_damage_idx = max(set(valid_damage_votes), key=valid_damage_votes.count)
+            winning_damage_confs = [c for c, v in zip(damage_confidences, damage_votes) if v == final_damage_idx]
+            avg_damage_confidence = sum(winning_damage_confs) / len(winning_damage_confs)
+        else:
+            final_damage_idx = -1
+            avg_damage_confidence = 0.0
 
     # Compute vote distributions (percentage of frames voting for each class)
     total = len(type_votes)
@@ -510,13 +813,16 @@ def predict_from_frames(frames, sid=None):
         type_distribution[name] = round((count / total) * 100, 1)
 
     damage_distribution = {}
-    for idx, name in enumerate(DAMAGE_CLASS_NAMES):
-        count = damage_votes.count(idx)
-        damage_distribution[name] = round((count / total) * 100, 1)
+    if is_final_no_disaster:
+        damage_distribution = {"No Damage": 100.0}
+    else:
+        for idx, name in enumerate(DAMAGE_CLASS_NAMES):
+            count = damage_votes.count(idx)
+            damage_distribution[name] = round((count / total) * 100, 1)
 
     return {
         "primary_type": TYPE_CLASS_NAMES[final_type_idx],
-        "primary_damage": DAMAGE_CLASS_NAMES[final_damage_idx],
+        "primary_damage": "No Damage" if is_final_no_disaster else DAMAGE_CLASS_NAMES[final_damage_idx],
         "type_confidence": round(avg_type_confidence, 2),
         "damage_confidence": round(avg_damage_confidence, 2),
         "type_distribution": type_distribution,
@@ -577,8 +883,10 @@ def analyze_image():
         file_ext = os.path.splitext(filename)[1].lower()
         is_video = file_ext in video_extensions
 
-        if not (type_model and damage_model):
-            return jsonify({"error": "Models not loaded"}), 500
+        if not type_model:
+            return jsonify({"error": "Type model not loaded"}), 500
+        if not any(damage_models.values()):
+            return jsonify({"error": "No damage models loaded"}), 500
 
         image_url = f"http://127.0.0.1:5000/static/uploads/{filename}"
 
@@ -635,38 +943,68 @@ def analyze_image():
                 type_probs = torch.nn.functional.softmax(type_outputs, dim=1)
                 type_conf, type_pred = torch.max(type_probs, 1)
 
-                damage_outputs = damage_model(tensor)
-                damage_probs = torch.nn.functional.softmax(damage_outputs, dim=1)
-                damage_conf, damage_pred = torch.max(damage_probs, 1)
-
             detected_type = TYPE_CLASS_NAMES[type_pred.item()]
-            detected_damage = DAMAGE_CLASS_NAMES[damage_pred.item()]
+            is_no_disaster = detected_type == 'No Disaster'
 
-            # Build distributions from softmax probabilities
+            if is_no_disaster:
+                detected_damage = "No Damage"
+                damage_conf_val = 0.0
+                damage_distribution = {"No Damage": 100.0}
+            else:
+                frame_damage_model = damage_models.get(detected_type)
+                if frame_damage_model:
+                    with torch.no_grad():
+                        damage_outputs = frame_damage_model(tensor)
+                        damage_probs = torch.nn.functional.softmax(damage_outputs, dim=1)
+                        damage_conf, damage_pred = torch.max(damage_probs, 1)
+                    detected_damage = DAMAGE_CLASS_NAMES[damage_pred.item()]
+                    damage_conf_val = round(damage_conf.item() * 100, 2)
+                    damage_distribution = {}
+                    for idx, name in enumerate(DAMAGE_CLASS_NAMES):
+                        damage_distribution[name] = round(damage_probs[0][idx].item() * 100, 1)
+                else:
+                    detected_damage = "No Damage"
+                    damage_conf_val = 0.0
+                    damage_distribution = {"No Damage": 100.0}
+
+            # Build type distributions from softmax probabilities
             type_distribution = {}
             for idx, name in enumerate(TYPE_CLASS_NAMES):
                 type_distribution[name] = round(type_probs[0][idx].item() * 100, 1)
 
-            damage_distribution = {}
-            for idx, name in enumerate(DAMAGE_CLASS_NAMES):
-                damage_distribution[name] = round(damage_probs[0][idx].item() * 100, 1)
-
             # Compute Grad-CAM for the image
             gradcam_data = {}
-            if type_gradcam and damage_gradcam:
-                try:
-                    gradcam_data = compute_gradcam_for_frame(
-                        type_model, damage_model, tensor,
-                        type_gradcam, damage_gradcam
-                    )
-                except Exception as e:
-                    print(f"Grad-CAM error on image: {e}", flush=True)
+            if is_no_disaster:
+                if type_gradcam:
+                    try:
+                        type_heatmap, _ = type_gradcam.compute_heatmap(tensor)
+                        from gradcam import heatmap_to_bbox
+                        import numpy as np
+                        gradcam_data = {
+                            "type_bbox": heatmap_to_bbox(type_heatmap),
+                            "damage_bbox": None,
+                            "damage_bboxes": [],
+                            "type_heatmap": np.round(type_heatmap, 3).tolist(),
+                            "damage_heatmap": None
+                        }
+                    except Exception as e:
+                        print(f"Grad-CAM error on image: {e}", flush=True)
+            elif type_gradcam:
+                frame_damage_gradcam = damage_gradcams.get(detected_type)
+                if frame_damage_gradcam:
+                    try:
+                        gradcam_data = compute_gradcam_for_frame(
+                            type_model, frame_damage_model, tensor,
+                            type_gradcam, frame_damage_gradcam
+                        )
+                    except Exception as e:
+                        print(f"Grad-CAM error on image: {e}", flush=True)
 
             return jsonify({
                 "type": detected_type,
                 "confidence": round(type_conf.item() * 100, 2),
                 "damage": detected_damage,
-                "damage_confidence": round(damage_conf.item() * 100, 2),
+                "damage_confidence": damage_conf_val,
                 "image_url": image_url,
                 "source": "image",
                 "type_distribution": type_distribution,
@@ -676,7 +1014,7 @@ def analyze_image():
                     "type": detected_type,
                     "type_conf": round(type_conf.item() * 100, 2),
                     "damage": detected_damage,
-                    "damage_conf": round(damage_conf.item() * 100, 2),
+                    "damage_conf": damage_conf_val,
                     "type_bbox": gradcam_data.get("type_bbox"),
                     "damage_bbox": gradcam_data.get("damage_bbox"),
                     "damage_bboxes": gradcam_data.get("damage_bboxes", []),
@@ -838,7 +1176,15 @@ def update_report(report_id):
             report.damage_level = data['damage_level']
             print(f"   Damage: {old_damage} → {report.damage_level}", flush=True)
 
-            
+        if 'disaster_type' in data:
+            old_type = report.disaster_type
+            report.disaster_type = data['disaster_type']
+            print(f"   Type: {old_type} → {report.disaster_type}", flush=True)
+
+        if 'notes' in data:
+            report.notes = data['notes']
+            print(f"   Notes updated", flush=True)
+
         session.commit()
         session.refresh(report)
         print(" Database updated successfully", flush=True)
@@ -890,8 +1236,8 @@ def handle_live_frame(data):
         return
     _last_live_analysis[sid] = now
 
-    if not (type_model and damage_model):
-        emit('live_frame_result', {'error': 'Models not loaded'})
+    if not type_model:
+        emit('live_frame_result', {'error': 'Type model not loaded'})
         return
 
     try:
@@ -909,29 +1255,64 @@ def handle_live_frame(data):
             type_probs = torch.nn.functional.softmax(type_outputs, dim=1)
             type_conf, type_pred = torch.max(type_probs, 1)
 
-            damage_outputs = damage_model(tensor)
-            damage_probs = torch.nn.functional.softmax(damage_outputs, dim=1)
-            damage_conf, damage_pred = torch.max(damage_probs, 1)
+        detected_type = TYPE_CLASS_NAMES[type_pred.item()]
+        is_no_disaster = detected_type == 'No Disaster'
+
+        if is_no_disaster:
+            detected_damage = "No Damage"
+            damage_conf_val = 0.0
+        else:
+            frame_damage_model = damage_models.get(detected_type)
+            if frame_damage_model:
+                with torch.no_grad():
+                    damage_outputs = frame_damage_model(tensor)
+                    damage_probs = torch.nn.functional.softmax(damage_outputs, dim=1)
+                    damage_conf, damage_pred = torch.max(damage_probs, 1)
+                detected_damage = DAMAGE_CLASS_NAMES[damage_pred.item()]
+                damage_conf_val = round(damage_conf.item() * 100, 2)
+            else:
+                detected_damage = "No Damage"
+                damage_conf_val = 0.0
 
         # Compute Grad-CAM bounding boxes
         gradcam_data = {}
-        if type_gradcam and damage_gradcam:
-            try:
-                gradcam_data = compute_gradcam_for_frame(
-                    type_model, damage_model, tensor,
-                    type_gradcam, damage_gradcam
-                )
-            except Exception as e:
-                print(f"[Live Grad-CAM] Error: {e}", flush=True)
+        if is_no_disaster:
+            if type_gradcam:
+                try:
+                    type_heatmap, _ = type_gradcam.compute_heatmap(tensor)
+                    from gradcam import heatmap_to_bbox
+                    import numpy as np
+                    gradcam_data = {
+                        "type_bbox": heatmap_to_bbox(type_heatmap),
+                        "damage_bbox": None,
+                        "damage_bboxes": [],
+                        "type_heatmap": np.round(type_heatmap, 3).tolist(),
+                        "damage_heatmap": None
+                    }
+                except Exception as e:
+                    print(f"[Live Grad-CAM] Error: {e}", flush=True)
+        elif type_gradcam:
+            frame_damage_gradcam = damage_gradcams.get(detected_type)
+            if frame_damage_gradcam:
+                try:
+                    frame_damage_model = damage_models.get(detected_type)
+                    gradcam_data = compute_gradcam_for_frame(
+                        type_model, frame_damage_model, tensor,
+                        type_gradcam, frame_damage_gradcam
+                    )
+                except Exception as e:
+                    print(f"[Live Grad-CAM] Error: {e}", flush=True)
 
         emit('live_frame_result', {
-            'type': TYPE_CLASS_NAMES[type_pred.item()],
-            'type_conf': round(type_conf.item() * 100, 2),
-            'damage': DAMAGE_CLASS_NAMES[damage_pred.item()],
-            'damage_conf': round(damage_conf.item() * 100, 2),
+            'type': detected_type,
+            'type_confidence': round(type_conf.item() * 100, 2),
+            'damage': detected_damage,
+            'damage_confidence': damage_conf_val,
             'type_bbox': gradcam_data.get('type_bbox'),
             'damage_bbox': gradcam_data.get('damage_bbox'),
             'damage_bboxes': gradcam_data.get('damage_bboxes', []),
+            'frame_width': image.width,
+            'frame_height': image.height,
             'timestamp': data.get('timestamp')
         })
 

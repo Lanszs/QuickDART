@@ -39,6 +39,8 @@ const ResponderDashboard = ({ onLogout }) => {
     const [showAddAssetModal, setShowAddAssetModal] = useState(false);
     const [newAsset, setNewAsset] = useState({ name: '', type: 'Vehicle' });
     const [inventorySelection, setInventorySelection] = useState([]);
+    const [statusDropdownId, setStatusDropdownId] = useState(null);
+    const [activeDeployments, setActiveDeployments] = useState([]);
 
     // --- HISTORY MODAL STATE ---
     const [selectedHistory, setSelectedHistory] = useState(null);
@@ -71,9 +73,13 @@ const ResponderDashboard = ({ onLogout }) => {
             const resResponse = await fetch('http://127.0.0.1:5000/api/v1/resources');
             if (resResponse.ok) {
                 const data = await resResponse.json();
-                const team = data.teams.find(t => t.id === parseInt(currentTeamId)); 
+                const team = data.teams.find(t => t.id === parseInt(currentTeamId));
                 setMyTeam(team);
             }
+
+            // 3. Fetch Active Deployments
+            const depResponse = await fetch(`http://127.0.0.1:5000/api/v1/teams/${currentTeamId}/deployments?status=Active`);
+            if (depResponse.ok) setActiveDeployments(await depResponse.json());
         } catch (error) {
             console.error("Failed to fetch data:", error);
         }
@@ -104,7 +110,13 @@ const ResponderDashboard = ({ onLogout }) => {
                     setMyTeam(team);
                 }
 
-                // 3. Chat History
+                // 3. Active Deployments
+                const depRes = await fetch(`http://127.0.0.1:5000/api/v1/teams/${currentTeamId}/deployments?status=Active`);
+                if (depRes.ok) {
+                    setActiveDeployments(await depRes.json());
+                }
+
+                // 4. Chat History
                 const chatRes = await fetch(`http://127.0.0.1:5000/api/v1/chat/history/team_${currentTeamId}`);
                 if (chatRes.ok) {
                     setMessages(await chatRes.json());
@@ -165,15 +177,39 @@ const ResponderDashboard = ({ onLogout }) => {
             setReports(prev => {
                 const exists = prev.find(r => r.id === updatedReport.id);
                 if (exists) {
-                    // If it becomes Pending (unlikely), remove it. Else update it.
                     if (updatedReport.status === 'Pending') return prev.filter(r => r.id !== updatedReport.id);
                     return prev.map(r => r.id === updatedReport.id ? updatedReport : r);
                 } else if (updatedReport.status !== 'Pending') {
-                    // It wasn't in our list (was Pending), now it is Active -> Add it
                     return [updatedReport, ...prev];
                 }
                 return prev;
             });
+        });
+
+        // 5. Report Claimed (another team claimed a report)
+        socket.on('report_claimed', (data) => {
+            console.log("🔒 [SOCKET] Report claimed:", data);
+            setReports(prev => prev.map(r =>
+                r.id === data.report_id
+                    ? { ...r, claimed_by_team_id: data.claimed_by_team_id }
+                    : r
+            ));
+            if (data.claimed_by_team_id !== parseInt(currentTeamId)) {
+                toast.info(`Report claimed by ${data.team_name}`);
+            }
+        });
+
+        // 6. Deployment Completed — refresh deployments and team data
+        socket.on('deployment_completed', () => {
+            fetch(`http://127.0.0.1:5000/api/v1/teams/${currentTeamId}/deployments?status=Active`)
+                .then(res => res.json())
+                .then(deps => setActiveDeployments(deps));
+            fetch('http://127.0.0.1:5000/api/v1/resources')
+                .then(res => res.json())
+                .then(data => {
+                    const team = data.teams.find(t => t.id === parseInt(currentTeamId));
+                    setMyTeam(team);
+                });
         });
 
         return () => {
@@ -182,6 +218,8 @@ const ResponderDashboard = ({ onLogout }) => {
             socket.off('receive_message');
             socket.off('new_report');
             socket.off('report_updated');
+            socket.off('report_claimed');
+            socket.off('deployment_completed');
         };
     }, [currentTeamId]);
 
@@ -263,8 +301,8 @@ const ResponderDashboard = ({ onLogout }) => {
     
     const openTaskModal = (task) => {
         setSelectedTask(task);
-        setSelectedAssets([]); 
-        setDeployedPersonnel(myTeam?.personnel_count || 0);
+        setSelectedAssets([]);
+        setDeployedPersonnel(myTeam?.available_personnel || myTeam?.personnel_count || 0);
         setShowTaskModal(true);
     };
 
@@ -279,36 +317,56 @@ const ResponderDashboard = ({ onLogout }) => {
         );
     };
 
-    // --- 1. RESPOND TO MISSION ---
+    // --- 1. RESPOND TO MISSION (via Deployment endpoint) ---
     const handleRespondNow = async () => {
         if (!myTeam || !selectedTask) return;
+
+        const personnelCount = parseInt(deployedPersonnel) || 0;
+        if (personnelCount <= 0) {
+            toast.error("Please assign at least 1 personnel.");
+            return;
+        }
+        if (personnelCount > (myTeam.available_personnel ?? myTeam.personnel_count)) {
+            toast.error("Not enough available personnel.");
+            return;
+        }
+
         setShowConfirmModal(true);
-        setShowTaskModal(false); 
-        
+        setShowTaskModal(false);
+
         try {
-            // Update Team Status
-            await fetch(`http://127.0.0.1:5000/api/v1/teams/${myTeam.id}/deploy`, {
-                method: 'PUT',
+            const res = await fetch(`http://127.0.0.1:5000/api/v1/teams/${myTeam.id}/deployments`, {
+                method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    status: 'Deployed', 
+                body: JSON.stringify({
+                    report_id: selectedTask.id,
+                    personnel_count: personnelCount,
                     task: selectedTask.title,
-                    report_id: selectedTask.id
+                    asset_ids: selectedAssets
                 })
             });
 
-            // Update Assets
-            for (const assetId of selectedAssets) {
-                await fetch(`http://127.0.0.1:5000/api/v1/assets/${assetId}/deploy`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ status: 'Deployed', location: selectedTask.location })
-                });
+            if (res.status === 409) {
+                const err = await res.json();
+                toast.error(err.error || "This report was just claimed by another team.");
+                setShowConfirmModal(false);
+                return;
+            }
+            if (res.status === 400) {
+                const err = await res.json();
+                toast.error(err.error || "Insufficient personnel available.");
+                setShowConfirmModal(false);
+                return;
+            }
+            if (!res.ok) {
+                toast.error("Deployment failed.");
+                setShowConfirmModal(false);
+                return;
             }
 
             setTimeout(() => {
                 setShowConfirmModal(false);
-                setShowTaskModal(true); 
+                setShowTaskModal(true);
                 toast.success("Unit Deployed Successfully");
                 fetchData();
             }, 1500);
@@ -316,6 +374,7 @@ const ResponderDashboard = ({ onLogout }) => {
         } catch (error) {
             console.error("Deployment error:", error);
             setShowConfirmModal(false);
+            toast.error("Network error during deployment.");
         }
     };
 
@@ -328,45 +387,39 @@ const ResponderDashboard = ({ onLogout }) => {
     const confirmCompleteMission = async () => {
         setShowCompleteMissionModal(false);
 
+        // Find the active deployment for this report
+        const deployment = activeDeployments.find(d => d.report_id === selectedTask.id);
+        if (!deployment) {
+            toast.error("No active deployment found for this report.");
+            return;
+        }
+
         try {
-            // 1. Set Team back to Idle
-            await fetch(`http://127.0.0.1:5000/api/v1/teams/${myTeam.id}/deploy`, {
-                method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: 'Idle', task: "", report_id: null })
+            const res = await fetch(`http://127.0.0.1:5000/api/v1/deployments/${deployment.id}/complete`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' }
             });
 
-            // 2. Set Report Status to 'Cleared'
-            await fetch(`http://127.0.0.1:5000/api/v1/reports/${selectedTask.id}`, {
-                method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: 'Cleared' })
-            });
-
-            // 3. Reset Deployed Assets to 'Available'
-            if (myTeam.assets) {
-                const assetsToReset = myTeam.assets.filter(a => a.status === 'Deployed');
-                await Promise.all(assetsToReset.map(asset => 
-                    fetch(`http://127.0.0.1:5000/api/v1/assets/${asset.id}/deploy`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ status: 'Available', location: 'Base' })
-                    })
-                ));
+            if (!res.ok) {
+                const err = await res.json();
+                toast.error(err.error || "Failed to complete mission.");
+                return;
             }
 
-            // 4. Notify Admin via Chat
+            // Notify Admin via Chat
             const payload = {
-                sender: myTeam.name, 
-                target_room: `team_${currentTeamId}`, 
-                message: `✅ MISSION COMPLETE: "${selectedTask.title}" has been cleared. All assets returning to base.`,
+                sender: myTeam.name,
+                target_room: `team_${currentTeamId}`,
+                message: `MISSION COMPLETE: "${selectedTask.title}" has been cleared. ${deployment.personnel_count} personnel returning to base.`,
                 timestamp: new Date().toISOString()
             };
             socket.emit('send_message', payload);
 
-            toast.success("Mission Completed. Assets Returned. HQ Notified.");
+            toast.success("Mission Completed. Personnel & Assets Returned. HQ Notified.");
             setShowTaskModal(false);
-            fetchData(); 
-        } catch (error) { 
-            console.error("Error completing mission:", error); 
+            fetchData();
+        } catch (error) {
+            console.error("Error completing mission:", error);
             toast.error("Failed to complete mission sequence.");
         }
     };
@@ -414,6 +467,21 @@ const ResponderDashboard = ({ onLogout }) => {
         } else {
             setInventorySelection(myTeam.assets.map(a => a.id)); // Select all
         }
+    };
+
+    // --- ASSET STATUS UPDATE ---
+    const handleAssetStatusChange = async (assetId, newStatus) => {
+        try {
+            await fetch(`http://127.0.0.1:5000/api/v1/assets/${assetId}/deploy`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: newStatus })
+            });
+            fetchData();
+        } catch (error) {
+            console.error("Failed to update asset status:", error);
+        }
+        setStatusDropdownId(null);
     };
 
     // --- NEW: ASSET CRUD (RESPONDER SIDE) ---
@@ -490,8 +558,17 @@ const ResponderDashboard = ({ onLogout }) => {
     const sortedDates = Object.keys(groupedCleared).sort((a, b) => new Date(b) - new Date(a)); // Newest dates first
 
     const isRespondingToThis = (task) => {
-        return myTeam?.status === 'Deployed' && myTeam?.current_report_id === task.id;
+        return activeDeployments.some(d => d.report_id === task.id);
     };
+
+    const isClaimedByOther = (task) => {
+        return task.claimed_by_team_id && task.claimed_by_team_id !== parseInt(currentTeamId);
+    };
+
+    const availablePersonnel = myTeam?.available_personnel ?? myTeam?.personnel_count ?? 0;
+    const totalPersonnel = myTeam?.personnel_count ?? 0;
+    const isFullyDeployed = availablePersonnel <= 0 && activeDeployments.length > 0;
+    const hasActiveDeployments = activeDeployments.length > 0;
 
     const updateMyStatus = async (newStatus) => {
         if (!myTeam) return;
@@ -513,6 +590,12 @@ const ResponderDashboard = ({ onLogout }) => {
                     {myTeam ? myTeam.name : "Field Response Unit"}
                 </h1>
                 <div className="flex items-center gap-6">
+                    <div className="flex items-center gap-3 bg-gray-800 px-4 py-2 rounded-lg">
+                        <span className="text-xs text-gray-400 uppercase font-bold">Personnel</span>
+                        <span className={`font-bold text-sm ${isFullyDeployed ? 'text-red-400' : 'text-green-400'}`}>
+                            {availablePersonnel}/{totalPersonnel} Available
+                        </span>
+                    </div>
                     <div className="flex items-center gap-3 bg-gray-800 px-4 py-2 rounded-lg">
                         <span className="text-xs text-gray-400 uppercase font-bold">Status</span>
                         <div className="flex items-center gap-2">
@@ -540,8 +623,8 @@ const ResponderDashboard = ({ onLogout }) => {
                     <div className="p-4 bg-gray-50 rounded-xl border border-gray-200 mb-4">
                         <p className="text-xs font-bold text-gray-500 mb-2 uppercase">Update Availability</p>
                         <div className="flex gap-2">
-                            <button onClick={() => updateMyStatus('Idle')} disabled={myTeam?.status === 'Deployed'} className={`flex-1 py-2 text-xs font-bold rounded flex flex-col items-center justify-center gap-1 transition-all ${myTeam?.status === 'Idle' || myTeam?.status === 'Deployed' ? 'bg-green-100 text-green-700 border border-green-300 shadow-sm' : 'bg-white text-gray-400 border border-gray-200 hover:bg-gray-100'}`}><Zap size={14} /> Active</button>
-                            <button onClick={() => updateMyStatus('Resting')} disabled={myTeam?.status === 'Deployed'} className={`flex-1 py-2 text-xs font-bold rounded flex flex-col items-center justify-center gap-1 transition-all ${myTeam?.status === 'Resting' ? 'bg-yellow-100 text-yellow-700 border border-yellow-300 shadow-sm' : 'bg-white text-gray-400 border border-gray-200 hover:bg-gray-100'}`}><Coffee size={14} /> Resting</button>
+                            <button onClick={() => updateMyStatus('Idle')} disabled={hasActiveDeployments} className={`flex-1 py-2 text-xs font-bold rounded flex flex-col items-center justify-center gap-1 transition-all ${myTeam?.status === 'Idle' || hasActiveDeployments ? 'bg-green-100 text-green-700 border border-green-300 shadow-sm' : 'bg-white text-gray-400 border border-gray-200 hover:bg-gray-100'}`}><Zap size={14} /> Active</button>
+                            <button onClick={() => updateMyStatus('Resting')} disabled={hasActiveDeployments} className={`flex-1 py-2 text-xs font-bold rounded flex flex-col items-center justify-center gap-1 transition-all ${myTeam?.status === 'Resting' ? 'bg-yellow-100 text-yellow-700 border border-yellow-300 shadow-sm' : 'bg-white text-gray-400 border border-gray-200 hover:bg-gray-100'}`}><Coffee size={14} /> Resting</button>
                         </div>
                     </div>
                     <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
@@ -591,12 +674,19 @@ const ResponderDashboard = ({ onLogout }) => {
 
                                                 {/* Grid */}
                                                 <div className="grid grid-cols-1 gap-3">
-                                                    {tasksInLevel.map(task => (
-                                                        <div 
+                                                    {tasksInLevel.map(task => {
+                                                        const claimed = isClaimedByOther(task);
+                                                        const responding = isRespondingToThis(task);
+                                                        const disabled = claimed || (isFullyDeployed && !responding);
+
+                                                        return (
+                                                        <div
                                                             key={task.id}
-                                                            onClick={() => openTaskModal(task)}
-                                                            className={`bg-white p-5 rounded-xl shadow-sm border transition-all cursor-pointer hover:shadow-md group relative overflow-hidden
-                                                                ${isRespondingToThis(task) ? 'border-green-500 ring-2 ring-green-500 bg-green-50' : 'border-gray-200 hover:border-blue-400'}
+                                                            onClick={() => !disabled && openTaskModal(task)}
+                                                            className={`p-5 rounded-xl shadow-sm border transition-all relative overflow-hidden
+                                                                ${responding ? 'border-green-500 ring-2 ring-green-500 bg-green-50 cursor-pointer' :
+                                                                  disabled ? 'border-gray-200 bg-gray-100 opacity-60 cursor-not-allowed' :
+                                                                  'bg-white border-gray-200 hover:border-blue-400 hover:shadow-md cursor-pointer group'}
                                                             `}
                                                         >
                                                             <div className="flex justify-between items-start relative z-10">
@@ -605,26 +695,37 @@ const ResponderDashboard = ({ onLogout }) => {
                                                                         <AlertCircle size={24} />
                                                                     </div>
                                                                     <div>
-                                                                        <h3 className="font-bold text-gray-800 text-lg group-hover:text-blue-600 transition-colors">
+                                                                        <h3 className={`font-bold text-lg transition-colors ${disabled ? 'text-gray-400' : 'text-gray-800 group-hover:text-blue-600'}`}>
                                                                             {task.title}
                                                                         </h3>
                                                                         <p className="text-sm text-gray-500 mt-1 flex items-center gap-3">
                                                                             <span className="flex items-center gap-1"><MapPin size={14}/> {task.location}</span>
                                                                             <span className="flex items-center gap-1"><Clock size={14}/> {new Date(task.timestamp).toLocaleTimeString()}</span>
                                                                         </p>
-                                                                        
-                                                                        {isRespondingToThis(task) && (
+
+                                                                        {responding && (
                                                                             <div className="mt-2 flex items-center gap-2 text-green-700 font-bold text-xs bg-green-100 px-2 py-1 rounded w-fit animate-pulse">
                                                                                 <Activity size={12} /> CURRENTLY RESPONDING
                                                                             </div>
                                                                         )}
+                                                                        {claimed && (
+                                                                            <div className="mt-2 flex items-center gap-2 text-gray-500 font-bold text-xs bg-gray-200 px-2 py-1 rounded w-fit">
+                                                                                <Shield size={12} /> CLAIMED BY ANOTHER TEAM
+                                                                            </div>
+                                                                        )}
+                                                                        {isFullyDeployed && !responding && !claimed && (
+                                                                            <div className="mt-2 flex items-center gap-2 text-orange-600 font-bold text-xs bg-orange-100 px-2 py-1 rounded w-fit">
+                                                                                <Users size={12} /> ALL PERSONNEL DEPLOYED
+                                                                            </div>
+                                                                        )}
                                                                     </div>
                                                                 </div>
-                                                                
-                                                                <ChevronRight className="text-gray-300 group-hover:text-blue-500" />
+
+                                                                <ChevronRight className={disabled ? 'text-gray-300' : 'text-gray-300 group-hover:text-blue-500'} />
                                                             </div>
                                                         </div>
-                                                    ))}
+                                                        );
+                                                    })}
                                                 </div>
                                             </div>
                                         );
@@ -667,13 +768,19 @@ const ResponderDashboard = ({ onLogout }) => {
                                 {myTeam?.assets && myTeam.assets.length > 0 ? (
                                     myTeam.assets.map(asset => {
                                         const isSelected = inventorySelection.includes(asset.id);
+                                        const isDropdownOpen = statusDropdownId === asset.id;
+                                        const statusColors = {
+                                            'Available': 'bg-green-100 text-green-700',
+                                            'Deployed': 'bg-red-100 text-red-700',
+                                            'Maintenance': 'bg-orange-100 text-orange-700',
+                                        };
                                         return (
-                                            <div 
-                                                key={asset.id} 
+                                            <div
+                                                key={asset.id}
                                                 onClick={() => toggleInventoryItem(asset.id)}
                                                 className={`p-4 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
-                                                    isSelected 
-                                                    ? 'bg-blue-50 border-blue-500 ring-1 ring-blue-500' 
+                                                    isSelected
+                                                    ? 'bg-blue-50 border-blue-500 ring-1 ring-blue-500'
                                                     : 'bg-white border-gray-200 hover:border-blue-300'
                                                 }`}
                                             >
@@ -682,14 +789,43 @@ const ResponderDashboard = ({ onLogout }) => {
                                                     <div className={`w-5 h-5 rounded border flex items-center justify-center ${isSelected ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-white'}`}>
                                                         {isSelected && <CheckSquare size={14} className="text-white" />}
                                                     </div>
-                                                    
+
                                                     <div className="p-2 bg-gray-100 rounded-lg">{getAssetIcon(asset.type)}</div>
                                                     <div>
                                                         <p className="font-bold text-gray-800">{asset.name}</p>
                                                         <p className="text-xs text-gray-500">{asset.type}</p>
                                                     </div>
                                                 </div>
-                                                <span className={`px-2 py-1 rounded text-xs font-bold ${asset.status === 'Deployed' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{asset.status}</span>
+                                                <div className="relative">
+                                                    {asset.status === 'Deployed' ? (
+                                                        <span className={`px-2 py-1 rounded text-xs font-bold ${statusColors['Deployed']}`}>Deployed</span>
+                                                    ) : (
+                                                        <>
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); setStatusDropdownId(isDropdownOpen ? null : asset.id); }}
+                                                                className={`px-2 py-1 rounded text-xs font-bold ${statusColors[asset.status] || 'bg-gray-100 text-gray-700'}`}
+                                                            >
+                                                                {asset.status === 'Maintenance' ? 'Under Maintenance' : asset.status}
+                                                            </button>
+                                                            {isDropdownOpen && (
+                                                                <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl z-20 overflow-hidden min-w-[160px]">
+                                                                    <button
+                                                                        onClick={(e) => { e.stopPropagation(); handleAssetStatusChange(asset.id, 'Available'); }}
+                                                                        className="w-full text-left px-3 py-2 text-xs font-medium hover:bg-green-50 flex items-center gap-2"
+                                                                    >
+                                                                        <span className="w-2 h-2 rounded-full bg-green-500"></span> Available
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={(e) => { e.stopPropagation(); handleAssetStatusChange(asset.id, 'Maintenance'); }}
+                                                                        className="w-full text-left px-3 py-2 text-xs font-medium hover:bg-orange-50 flex items-center gap-2"
+                                                                    >
+                                                                        <span className="w-2 h-2 rounded-full bg-orange-500"></span> Under Maintenance
+                                                                    </button>
+                                                                </div>
+                                                            )}
+                                                        </>
+                                                    )}
+                                                </div>
                                             </div>
                                         );
                                     })
@@ -880,23 +1016,25 @@ const ResponderDashboard = ({ onLogout }) => {
                                 <p className="text-blue-800 text-sm leading-relaxed">{selectedTask.description}</p>
                             </div>
 
-                            {!isRespondingToThis(selectedTask) && (
+                            {!isRespondingToThis(selectedTask) && !isClaimedByOther(selectedTask) && (
                                 <>
-                                    {/* --- NEW: PERSONNEL COUNT INPUT --- */}
+                                    {/* --- PERSONNEL COUNT INPUT --- */}
                                     <div className="mb-6 bg-gray-50 p-4 rounded-xl border border-gray-200">
                                         <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
                                             <Users size={16} className="text-gray-500"/> Personnel Deploying
                                         </label>
-                                        <input 
-                                            type="number" 
-                                            className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono text-lg"
+                                        <input
+                                            type="range"
+                                            className="w-full accent-blue-600"
                                             value={deployedPersonnel}
-                                            onChange={(e) => setDeployedPersonnel(e.target.value)}
-                                            placeholder="Enter count..."
+                                            onChange={(e) => setDeployedPersonnel(parseInt(e.target.value))}
                                             min="1"
-                                            max={myTeam?.personnel_count || 99}
+                                            max={availablePersonnel || 1}
                                         />
-                                        <p className="text-xs text-gray-400 mt-1 text-right">Total Available: {myTeam?.personnel_count || 0}</p>
+                                        <div className="flex justify-between items-center mt-2">
+                                            <span className="text-sm font-mono font-bold text-blue-700">{deployedPersonnel} personnel</span>
+                                            <span className="text-xs text-gray-400">Available: {availablePersonnel} / {totalPersonnel} total</span>
+                                        </div>
                                     </div>
 
                                     <div className="mb-6">
@@ -911,6 +1049,10 @@ const ResponderDashboard = ({ onLogout }) => {
                             <button onClick={() => setShowTaskModal(false)} className="px-4 py-2 bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 font-bold rounded-lg transition-colors">Close</button>
                             {isRespondingToThis(selectedTask) ? (
                                 <button onClick={handleCompleteMission} className="px-6 py-2 bg-gray-800 hover:bg-gray-900 text-white font-bold rounded-lg shadow-md flex items-center gap-2"><CheckSquare size={18} /> Complete Mission</button>
+                            ) : isClaimedByOther(selectedTask) ? (
+                                <span className="px-6 py-2 bg-gray-300 text-gray-500 font-bold rounded-lg flex items-center gap-2"><Shield size={18} /> Claimed by Another Team</span>
+                            ) : isFullyDeployed ? (
+                                <span className="px-6 py-2 bg-orange-100 text-orange-600 font-bold rounded-lg flex items-center gap-2"><Users size={18} /> All Personnel Deployed</span>
                             ) : (
                                 <button onClick={handleRespondNow} className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg shadow-md flex items-center gap-2"><Zap size={18} fill="currentColor" /> Respond Now</button>
                             )}

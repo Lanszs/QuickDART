@@ -165,7 +165,8 @@ def heatmap_to_bboxes(heatmap, threshold=0.4, min_area_ratio=0.01):
 
 
 def compute_gradcam_for_frame(type_model, damage_model, input_tensor,
-                               type_gradcam, damage_gradcam):
+                               type_gradcam, damage_gradcam,
+                               type_class_names=None):
     """
     Run Grad-CAM on both models for a single frame.
 
@@ -175,22 +176,32 @@ def compute_gradcam_for_frame(type_model, damage_model, input_tensor,
         input_tensor: preprocessed tensor (1, 3, 224, 224)
         type_gradcam: GradCAM instance for type model
         damage_gradcam: GradCAM instance for damage model
+        type_class_names: list of class names; if provided and predicted class
+                          is 'No Disaster', damage Grad-CAM is skipped
 
     Returns:
         dict with type_bbox and damage_bbox, plus heatmap data for visualization
     """
     # Type model Grad-CAM
-    type_heatmap, _ = type_gradcam.compute_heatmap(input_tensor)
+    type_heatmap, type_pred_class = type_gradcam.compute_heatmap(input_tensor)
     type_bbox = heatmap_to_bbox(type_heatmap)
+    type_heatmap_list = np.round(type_heatmap, 3).tolist()
+
+    # Skip damage Grad-CAM if predicted type is "No Disaster"
+    if type_class_names and type_class_names[type_pred_class] == 'No Disaster':
+        return {
+            "type_bbox": type_bbox,
+            "damage_bbox": None,
+            "damage_bboxes": [],
+            "type_heatmap": type_heatmap_list,
+            "damage_heatmap": None
+        }
 
     # Damage model Grad-CAM
     damage_heatmap, _ = damage_gradcam.compute_heatmap(input_tensor)
     damage_bbox = heatmap_to_bbox(damage_heatmap)
     damage_bboxes = heatmap_to_bboxes(damage_heatmap)
 
-    # Convert heatmaps to serializable lists (downsampled for JSON size)
-    # Heatmaps are 7x7 from ResNet50 layer4, resize to 14x14 for smoother overlay
-    type_heatmap_list = np.round(type_heatmap, 3).tolist()
     damage_heatmap_list = np.round(damage_heatmap, 3).tolist()
 
     return {

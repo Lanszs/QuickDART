@@ -357,20 +357,20 @@ const AssetsTeams = () => {
             <div className="flex justify-between items-center mb-6">
                 <div>
                     <h2 className="text-2xl font-bold text-gray-800">Operational Resources</h2>
-                    <p className="text-sm text-gray-500 mt-1">Departmental Breakdown</p>
+                    <p className="text-sm text-gray-500 mt-1">Departmental Breakdown — <span className="text-xs text-gray-400">Last updated: {lastUpdated.toLocaleTimeString()}</span></p>
                 </div>
                 <div className="flex gap-2">
-                    <button onClick={() => setShowAddTeamModal(true)} 
+                    <button onClick={() => setShowAddTeamModal(true)}
                             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 shadow-sm">
                                 <Plus size={16} /> Add Team</button>
-                    <button onClick={fetchData} className="flex items-center gap-2 px-4 py-2 bg-white text-gray-600 border border-gray-300 rounded-lg"><RefreshCw size={16} /></button>
+                    <button onClick={fetchData} className="flex items-center gap-2 px-4 py-2 bg-white text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"><RefreshCw size={16} /> Refresh</button>
                 </div>
             </div>
 
             {/* Summaries */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
                 <SummaryCard title="Active Teams" value={data.teams.filter(t => t.status === 'Deployed').length} total={data.teams.length} icon={<Users className="text-blue-600" size={24} />} color="bg-blue-100" />
-                <SummaryCard title="Total Personnel" value={data.teams.reduce((acc, t) => acc + t.personnel_count, 0)} total={data.teams.reduce((acc, t) => acc + t.personnel_count, 0)} icon={<CheckCircle className="text-green-600" size={24} />} color="bg-green-100" />
+                <SummaryCard title="Available Personnel" value={data.teams.reduce((acc, t) => acc + (t.available_personnel ?? t.personnel_count), 0)} total={data.teams.reduce((acc, t) => acc + t.personnel_count, 0)} icon={<CheckCircle className="text-green-600" size={24} />} color="bg-green-100" />
                 <SummaryCard title="Deployed Assets" value={data.assets.filter(a => a.status === 'Deployed').length} total={data.assets.length} icon={<Activity className="text-orange-600" size={24} />} color="bg-orange-100" />
                 <SummaryCard title="Under Maintenance" value={data.assets.filter(a => a.status === 'Maintenance').length} total={data.assets.length} icon={<Wrench className="text-red-600" size={24} />} color="bg-red-100" />
             </div>
@@ -438,7 +438,7 @@ const AssetsTeams = () => {
                                                         {team.name}
                                                         {team.status === 'Deployed' && <span className="h-2 w-2 bg-red-500 rounded-full animate-pulse"></span>}
                                                     </div>
-                                                    <p className="text-xs text-gray-500"> {team.personnel_count} Pax</p>
+                                                    <p className="text-xs text-gray-500">{team.available_personnel ?? team.personnel_count}/{team.personnel_count} Pax Available</p>
                                                 </div>
                                             </div>
                                             <StatusBadge status={team.status} />
@@ -446,10 +446,14 @@ const AssetsTeams = () => {
 
                                         {/* Actions & Task */}
                                         <div className="p-4">
-                                            {team.status === 'Deployed' && (
-                                                <div className="mb-4 px-3 py-2 bg-red-50 border border-red-100 rounded text-xs text-red-800 font-medium flex items-start gap-2">
-                                                    <Activity size={14} className="mt-0.5" />
-                                                    <span><strong className="block">Current Mission:</strong> {team.current_task}</span>
+                                            {team.active_deployments && team.active_deployments.length > 0 && (
+                                                <div className="mb-4 space-y-2">
+                                                    {team.active_deployments.map(dep => (
+                                                        <div key={dep.id} className="px-3 py-2 bg-red-50 border border-red-100 rounded text-xs text-red-800 font-medium flex items-start gap-2">
+                                                            <Activity size={14} className="mt-0.5 shrink-0" />
+                                                            <span><strong>{dep.task || 'Active Mission'}</strong> — {dep.personnel_count} personnel</span>
+                                                        </div>
+                                                    ))}
                                                 </div>
                                             )}
 
@@ -462,7 +466,7 @@ const AssetsTeams = () => {
                                                             <div key={asset.id} className="flex items-center justify-between text-xs bg-gray-50 p-2 rounded border border-gray-100 group">
                                                                 <span className="font-medium text-gray-700">{asset.name} ({asset.type})</span>
                                                                 <div className="flex items-center gap-2">
-                                                                    <span className={`px-1.5 py-0.5 rounded ${asset.status === 'Available' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>{asset.status}</span>
+                                                                    <span className={`px-1.5 py-0.5 rounded ${asset.status === 'Available' ? 'bg-green-100 text-green-700' : asset.status === 'Maintenance' ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'}`}>{asset.status === 'Maintenance' ? 'Under Maintenance' : asset.status}</span>
                                                                     <button onClick={() => handleDeleteAsset(asset.id)} className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100"><Trash2 size={12} /></button>
                                                                 </div>
                                                             </div>
@@ -473,8 +477,8 @@ const AssetsTeams = () => {
 
                                             {/* Action Buttons */}
                                             <div className="flex gap-2 pt-2 border-t border-gray-50">
-                                               
-                                                <button onClick={() => handleDeleteTeam(team.id)} className="px-2 text-gray-300 hover:text-red-500"><Trash2 size={16}/></button>
+                                                <button onClick={() => openNotifyModal(team, 'team')} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-200 transition-colors"><Send size={12} /> Notify</button>
+                                                <button onClick={() => handleDeleteTeam(team.id)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-lg border border-red-200 transition-colors"><Trash2 size={12}/> Delete</button>
                                             </div>
                                         </div>
                                     </div>
@@ -569,7 +573,19 @@ const AssetsTeams = () => {
                 <Modal onClose={() => setShowNotifyModal(false)}>
                     <h3 className="text-xl font-bold mb-4">Notify {selectedItem?.name}</h3>
                     <textarea value={notifyMessage} onChange={(e) => setNotifyMessage(e.target.value)} placeholder="Message..." className="w-full p-3 border rounded mb-4" rows="3" />
-                    <button onClick={() => console.log("Send")} className="w-full py-2 bg-green-600 text-white font-bold rounded">Send</button>
+                    <button onClick={() => {
+                        if (!notifyMessage.trim() || !selectedItem) return;
+                        const socket = io('http://127.0.0.1:5000');
+                        socket.emit('send_message', {
+                            sender: 'Admin',
+                            target_room: `team_${selectedItem.id}`,
+                            message: notifyMessage,
+                            timestamp: new Date().toISOString()
+                        });
+                        toast.success(`Message sent to ${selectedItem.name}`);
+                        setShowNotifyModal(false);
+                        setNotifyMessage('');
+                    }} className="w-full py-2 bg-green-600 text-white font-bold rounded hover:bg-green-700 transition-colors flex items-center justify-center gap-2"><Send size={16} /> Send Message</button>
                 </Modal>
             )}
 
