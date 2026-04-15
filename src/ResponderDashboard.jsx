@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Camera, MapPin, CheckCircle, User, LogOut, Activity,
-    FileText, Clock, AlertCircle, ChevronRight, XCircle, ImageIcon,
+    FileText, Clock, AlertCircle, ChevronRight, ChevronDown, XCircle, ImageIcon, Eye, EyeOff,
     MessageSquare, Send, Zap, Coffee, Truck, Radio, Package, Heart, Shield,
-    AlertTriangle, Calendar, CheckSquare, Plus, Trash2, Wrench, History, Archive, Square, Users, Loader2 } from 'lucide-react';
+    AlertTriangle, Calendar, CheckSquare, Plus, Trash2, Wrench, History, Archive, Square, Users, Loader2, Plane, Video } from 'lucide-react';
 import VideoAnalysisPlayer from './components/VideoAnalysisPlayer';
+import DroneUpload from './DroneUpload';
+import DroneLive from './DroneLive';
 import { io } from 'socket.io-client';
 import { toast } from 'react-toastify';
 
@@ -565,6 +567,10 @@ const ResponderDashboard = ({ onLogout }) => {
         return task.claimed_by_team_id && task.claimed_by_team_id !== parseInt(currentTeamId);
     };
 
+    const isAssignedToMe = (task) => {
+        return task.claimed_by_team_id && task.claimed_by_team_id === parseInt(currentTeamId) && !isRespondingToThis(task);
+    };
+
     const availablePersonnel = myTeam?.available_personnel ?? myTeam?.personnel_count ?? 0;
     const totalPersonnel = myTeam?.personnel_count ?? 0;
     const isFullyDeployed = availablePersonnel <= 0 && activeDeployments.length > 0;
@@ -615,6 +621,8 @@ const ResponderDashboard = ({ onLogout }) => {
                 <nav className="w-64 bg-white shadow-lg flex flex-col p-4 gap-2 border-r border-gray-200">
                     <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Field Operations</div>
                     <NavButton active={activeTab === 'tasks'} onClick={() => setActiveTab('tasks')} icon={<CheckCircle size={18} />} label="My Tasks" />
+                    <NavButton active={activeTab === 'drone'} onClick={() => setActiveTab('drone')} icon={<Plane size={18} />} label="Drone Upload" />
+                    <NavButton active={activeTab === 'drone-live'} onClick={() => setActiveTab('drone-live')} icon={<Video size={18} />} label="Live Drone" />
                     <NavButton active={activeTab === 'chat'} onClick={() => setActiveTab('chat')} icon={<MessageSquare size={18} />} label="Command Chat" />
                     <NavButton active={activeTab === 'inventory'} onClick={() => setActiveTab('inventory')} icon={<Truck size={18} />} label="Inventory" />
                     <NavButton active={activeTab === 'incidents'} onClick={() => setActiveTab('incidents')} icon={<FileText size={18} />} label="Incident Log" />
@@ -637,15 +645,101 @@ const ResponderDashboard = ({ onLogout }) => {
                 <main className="flex-1 p-8 overflow-y-auto">
                     
                     {/* --- TAB: MY TASKS --- */}
-                    {activeTab === 'tasks' && (
+                    {activeTab === 'tasks' && (() => {
+                        const respondingTasks = myTasks.filter(t => isRespondingToThis(t));
+                        const assignedToMe = myTasks.filter(t => isAssignedToMe(t));
+                        const availableTasks = myTasks.filter(t => !isRespondingToThis(t) && !isClaimedByOther(t) && !isAssignedToMe(t));
+                        const claimedByOthers = myTasks.filter(t => isClaimedByOther(t));
+
+                        const renderTaskCards = (tasks, options = {}) => {
+                            const { forceDisabled = false, showClaimedBadge = false, showAssignedBadge = false } = options;
+                            return damageOrder.map(level => {
+                                const tasksInLevel = tasks.filter(t => t.damage_level === level);
+                                if (tasksInLevel.length === 0) return null;
+                                return (
+                                    <div key={level}>
+                                        <div className={`flex items-center gap-2 mb-2 border-b pb-1 ${
+                                            level === 'Destroyed' ? 'border-red-300 text-red-600' :
+                                            level === 'Major' ? 'border-orange-300 text-orange-600' :
+                                            level === 'Minor' ? 'border-yellow-300 text-yellow-600' :
+                                            'border-gray-200 text-gray-500'
+                                        }`}>
+                                            <AlertTriangle size={16} />
+                                            <span className="text-sm font-bold uppercase tracking-wide">{level}</span>
+                                            <span className="bg-white border px-1.5 rounded text-[10px] font-mono ml-auto text-gray-400">{tasksInLevel.length}</span>
+                                        </div>
+                                        <div className="grid grid-cols-1 gap-3 mb-4">
+                                            {tasksInLevel.map(task => {
+                                                const responding = isRespondingToThis(task);
+                                                const disabled = forceDisabled || (isFullyDeployed && !responding);
+                                                return (
+                                                    <div
+                                                        key={task.id}
+                                                        onClick={() => !disabled && openTaskModal(task)}
+                                                        className={`p-5 rounded-xl shadow-sm border transition-all relative overflow-hidden
+                                                            ${responding ? 'border-green-500 ring-2 ring-green-500 bg-green-50 cursor-pointer' :
+                                                              disabled ? 'border-gray-200 bg-gray-100 opacity-60 cursor-not-allowed' :
+                                                              'bg-white border-gray-200 hover:border-blue-400 hover:shadow-md cursor-pointer group'}
+                                                        `}
+                                                    >
+                                                        <div className="flex justify-between items-start relative z-10">
+                                                            <div className="flex items-start gap-4">
+                                                                <div className={`p-3 rounded-lg ${task.status === 'Critical' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>
+                                                                    <AlertCircle size={24} />
+                                                                </div>
+                                                                <div>
+                                                                    <h3 className={`font-bold text-lg transition-colors ${disabled ? 'text-gray-400' : 'text-gray-800 group-hover:text-blue-600'}`}>
+                                                                        {task.title}
+                                                                    </h3>
+                                                                    <p className="text-sm text-gray-500 mt-1 flex items-center gap-3">
+                                                                        <span className="flex items-center gap-1"><MapPin size={14}/> {task.location}</span>
+                                                                        <span className="flex items-center gap-1"><Clock size={14}/> {new Date(task.timestamp).toLocaleTimeString()}</span>
+                                                                    </p>
+                                                                    {responding && (
+                                                                        <div className="mt-2 flex items-center gap-2 text-green-700 font-bold text-xs bg-green-100 px-2 py-1 rounded w-fit animate-pulse">
+                                                                            <Activity size={12} /> CURRENTLY RESPONDING
+                                                                        </div>
+                                                                    )}
+                                                                    {showClaimedBadge && (
+                                                                        <div className="mt-2 flex items-center gap-2 text-gray-500 font-bold text-xs bg-gray-200 px-2 py-1 rounded w-fit">
+                                                                            <Shield size={12} /> CLAIMED BY ANOTHER TEAM
+                                                                        </div>
+                                                                    )}
+                                                                    {showAssignedBadge && (
+                                                                        <div className="mt-2 flex items-center gap-2 text-amber-700 font-bold text-xs bg-amber-100 px-2 py-1 rounded w-fit">
+                                                                            <Zap size={12} fill="currentColor" /> ASSIGNED BY ADMIN — PRIORITY
+                                                                        </div>
+                                                                    )}
+                                                                    {isFullyDeployed && !responding && !forceDisabled && (
+                                                                        <div className="mt-2 flex items-center gap-2 text-orange-600 font-bold text-xs bg-orange-100 px-2 py-1 rounded w-fit">
+                                                                            <Users size={12} /> ALL PERSONNEL DEPLOYED
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                            <ChevronRight className={disabled ? 'text-gray-300' : 'text-gray-300 group-hover:text-blue-500'} />
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                );
+                            });
+                        };
+
+                        return (
                         <div className="max-w-4xl mx-auto">
                             <div className="flex items-center justify-between mb-6">
                                 <h2 className="text-2xl font-bold text-gray-800">Responder Tasks</h2>
-                                <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">
-                                    {myTasks.length} Active
-                                </span>
+                                <div className="flex gap-2">
+                                    {respondingTasks.length > 0 && <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold">{respondingTasks.length} Responding</span>}
+                                    {assignedToMe.length > 0 && <span className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-xs font-bold">{assignedToMe.length} Assigned</span>}
+                                    <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">{availableTasks.length} Available</span>
+                                    {claimedByOthers.length > 0 && <span className="bg-gray-100 text-gray-500 px-3 py-1 rounded-full text-xs font-bold">{claimedByOthers.length} Claimed</span>}
+                                </div>
                             </div>
-                            
+
                             {myTasks.length === 0 ? (
                                 <div className="flex flex-col items-center justify-center h-64 bg-white rounded-xl border border-dashed border-gray-300 text-gray-400">
                                     <CheckCircle size={48} className="mb-4 text-green-500 opacity-50" />
@@ -654,85 +748,71 @@ const ResponderDashboard = ({ onLogout }) => {
                                 </div>
                             ) : (
                                 <div className="space-y-6">
-                                    {damageOrder.map(level => {
-                                        const tasksInLevel = myTasks.filter(t => t.damage_level === level);
-                                        if (tasksInLevel.length === 0) return null;
-
-                                        return (
-                                            <div key={level} className="animate-in slide-in-from-left duration-300">
-                                                {/* Header */}
-                                                <div className={`flex items-center gap-2 mb-3 border-b-2 pb-1 ${
-                                                    level === 'Destroyed' ? 'border-red-500 text-red-700' :
-                                                    level === 'Major' ? 'border-orange-500 text-orange-700' :
-                                                    level === 'Minor' ? 'border-yellow-500 text-yellow-700' :
-                                                    'border-gray-300 text-gray-600'
-                                                }`}>
-                                                    <AlertTriangle size={20} />
-                                                    <h3 className="text-lg font-bold uppercase tracking-wide">{level} </h3>
-                                                    <span className="bg-white border px-2 rounded text-xs font-mono ml-auto text-gray-500">{tasksInLevel.length}</span>
-                                                </div>
-
-                                                {/* Grid */}
-                                                <div className="grid grid-cols-1 gap-3">
-                                                    {tasksInLevel.map(task => {
-                                                        const claimed = isClaimedByOther(task);
-                                                        const responding = isRespondingToThis(task);
-                                                        const disabled = claimed || (isFullyDeployed && !responding);
-
-                                                        return (
-                                                        <div
-                                                            key={task.id}
-                                                            onClick={() => !disabled && openTaskModal(task)}
-                                                            className={`p-5 rounded-xl shadow-sm border transition-all relative overflow-hidden
-                                                                ${responding ? 'border-green-500 ring-2 ring-green-500 bg-green-50 cursor-pointer' :
-                                                                  disabled ? 'border-gray-200 bg-gray-100 opacity-60 cursor-not-allowed' :
-                                                                  'bg-white border-gray-200 hover:border-blue-400 hover:shadow-md cursor-pointer group'}
-                                                            `}
-                                                        >
-                                                            <div className="flex justify-between items-start relative z-10">
-                                                                <div className="flex items-start gap-4">
-                                                                    <div className={`p-3 rounded-lg ${task.status === 'Critical' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>
-                                                                        <AlertCircle size={24} />
-                                                                    </div>
-                                                                    <div>
-                                                                        <h3 className={`font-bold text-lg transition-colors ${disabled ? 'text-gray-400' : 'text-gray-800 group-hover:text-blue-600'}`}>
-                                                                            {task.title}
-                                                                        </h3>
-                                                                        <p className="text-sm text-gray-500 mt-1 flex items-center gap-3">
-                                                                            <span className="flex items-center gap-1"><MapPin size={14}/> {task.location}</span>
-                                                                            <span className="flex items-center gap-1"><Clock size={14}/> {new Date(task.timestamp).toLocaleTimeString()}</span>
-                                                                        </p>
-
-                                                                        {responding && (
-                                                                            <div className="mt-2 flex items-center gap-2 text-green-700 font-bold text-xs bg-green-100 px-2 py-1 rounded w-fit animate-pulse">
-                                                                                <Activity size={12} /> CURRENTLY RESPONDING
-                                                                            </div>
-                                                                        )}
-                                                                        {claimed && (
-                                                                            <div className="mt-2 flex items-center gap-2 text-gray-500 font-bold text-xs bg-gray-200 px-2 py-1 rounded w-fit">
-                                                                                <Shield size={12} /> CLAIMED BY ANOTHER TEAM
-                                                                            </div>
-                                                                        )}
-                                                                        {isFullyDeployed && !responding && !claimed && (
-                                                                            <div className="mt-2 flex items-center gap-2 text-orange-600 font-bold text-xs bg-orange-100 px-2 py-1 rounded w-fit">
-                                                                                <Users size={12} /> ALL PERSONNEL DEPLOYED
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                </div>
-
-                                                                <ChevronRight className={disabled ? 'text-gray-300' : 'text-gray-300 group-hover:text-blue-500'} />
-                                                            </div>
-                                                        </div>
-                                                        );
-                                                    })}
-                                                </div>
+                                    {/* Section 1: Currently Responding */}
+                                    {respondingTasks.length > 0 && (
+                                        <div className="animate-in slide-in-from-left duration-300">
+                                            <div className="flex items-center gap-2 mb-4 text-green-700">
+                                                <Activity size={22} />
+                                                <h3 className="text-xl font-bold">Currently Responding</h3>
+                                                <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-xs font-bold ml-2">{respondingTasks.length}</span>
                                             </div>
-                                        );
-                                    })}
+                                            {renderTaskCards(respondingTasks)}
+                                        </div>
+                                    )}
+
+                                    {/* Section 2: Assigned to You — Priority */}
+                                    {assignedToMe.length > 0 && (
+                                        <div className="animate-in slide-in-from-left duration-300">
+                                            <div className="flex items-center gap-2 mb-4 text-amber-700">
+                                                <Zap size={22} fill="currentColor" />
+                                                <h3 className="text-xl font-bold">Assigned to You — Priority</h3>
+                                                <span className="bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-xs font-bold ml-2">{assignedToMe.length}</span>
+                                            </div>
+                                            <div className="border-l-4 border-amber-400 pl-4">
+                                                <p className="text-sm text-amber-600 mb-3 font-medium">Admin has assigned these reports to your team. Respond to these first.</p>
+                                                {renderTaskCards(assignedToMe, { showAssignedBadge: true })}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Section 3: Available for Response */}
+                                    {availableTasks.length > 0 && (
+                                        <div className="animate-in slide-in-from-left duration-300">
+                                            <div className="flex items-center gap-2 mb-4 text-blue-700">
+                                                <AlertCircle size={22} />
+                                                <h3 className="text-xl font-bold">Available for Response</h3>
+                                                <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full text-xs font-bold ml-2">{availableTasks.length}</span>
+                                            </div>
+                                            {renderTaskCards(availableTasks)}
+                                        </div>
+                                    )}
+
+                                    {/* Section 4: Claimed by Other Teams (collapsible) */}
+                                    {claimedByOthers.length > 0 && (
+                                        <ClaimedSection tasks={claimedByOthers} renderTaskCards={renderTaskCards} />
+                                    )}
                                 </div>
                             )}
                         </div>
+                        );
+                    })()}
+
+                    {/* --- DRONE UPLOAD TAB --- */}
+                    {activeTab === 'drone' && (
+                        <DroneUpload
+                            myTeam={myTeam}
+                            currentTeamId={currentTeamId}
+                            onReportSaved={fetchData}
+                        />
+                    )}
+
+                    {/* --- LIVE DRONE TAB --- */}
+                    {activeTab === 'drone-live' && (
+                        <DroneLive
+                            myTeam={myTeam}
+                            currentTeamId={currentTeamId}
+                            onReportSaved={fetchData}
+                        />
                     )}
 
                     {/* --- INVENTORY TAB (UPDATED) --- */}
@@ -1023,17 +1103,19 @@ const ResponderDashboard = ({ onLogout }) => {
                                         <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
                                             <Users size={16} className="text-gray-500"/> Personnel Deploying
                                         </label>
-                                        <input
-                                            type="range"
-                                            className="w-full accent-blue-600"
-                                            value={deployedPersonnel}
-                                            onChange={(e) => setDeployedPersonnel(parseInt(e.target.value))}
-                                            min="1"
-                                            max={availablePersonnel || 1}
-                                        />
-                                        <div className="flex justify-between items-center mt-2">
-                                            <span className="text-sm font-mono font-bold text-blue-700">{deployedPersonnel} personnel</span>
-                                            <span className="text-xs text-gray-400">Available: {availablePersonnel} / {totalPersonnel} total</span>
+                                        <div className="flex items-center gap-3">
+                                            <input
+                                                type="number"
+                                                className="w-24 p-2 border border-gray-300 rounded-lg text-center text-lg font-bold text-blue-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none"
+                                                value={deployedPersonnel}
+                                                onChange={(e) => {
+                                                    const val = parseInt(e.target.value) || 1;
+                                                    setDeployedPersonnel(Math.max(1, Math.min(val, availablePersonnel || 1)));
+                                                }}
+                                                min="1"
+                                                max={availablePersonnel || 1}
+                                            />
+                                            <span className="text-sm text-gray-500">out of <strong className="text-gray-700">{availablePersonnel}</strong> available ({totalPersonnel} total)</span>
                                         </div>
                                     </div>
 
@@ -1155,6 +1237,24 @@ const ResponderDashboard = ({ onLogout }) => {
                     </div>
                 </div>
             )}
+        </div>
+    );
+};
+
+const ClaimedSection = ({ tasks, renderTaskCards }) => {
+    const [expanded, setExpanded] = React.useState(false);
+    return (
+        <div className="animate-in slide-in-from-left duration-300">
+            <button
+                onClick={() => setExpanded(!expanded)}
+                className="flex items-center gap-2 mb-4 text-gray-500 hover:text-gray-700 transition-colors w-full"
+            >
+                {expanded ? <ChevronDown size={22} /> : <ChevronRight size={22} />}
+                <h3 className="text-xl font-bold">Claimed by Other Teams</h3>
+                <span className="bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full text-xs font-bold ml-2">{tasks.length}</span>
+                <span className="text-xs text-gray-400 ml-auto">{expanded ? 'Hide' : 'Show'}</span>
+            </button>
+            {expanded && renderTaskCards(tasks, { forceDisabled: true, showClaimedBadge: true })}
         </div>
     );
 };

@@ -24,7 +24,6 @@ const DamageReports = ({ initialHighlightId }) => {
     // Teams for assignment
     const [teams, setTeams] = useState([]);
     const [assignTeamId, setAssignTeamId] = useState('');
-    const [assignPersonnel, setAssignPersonnel] = useState(1);
 
     // --- SORTING CONFIGURATION ---
     const statusOrder = ['Pending', 'Active', 'Cleared'];
@@ -130,36 +129,28 @@ const DamageReports = ({ initialHighlightId }) => {
         }
     };
 
-    // Admin assign report to team
+    // Admin assign report to team (sets Active + claimed_by_team_id, no deployment created)
     const handleAssignTeam = async () => {
         if (!assignTeamId || !selectedReport) return;
         const team = teams.find(t => t.id === parseInt(assignTeamId));
         if (!team) return;
 
         try {
-            const response = await fetch(`http://127.0.0.1:5000/api/v1/teams/${assignTeamId}/deployments`, {
-                method: 'POST',
+            const response = await fetch(`http://127.0.0.1:5000/api/v1/reports/${selectedReport.id}`, {
+                method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    report_id: selectedReport.id,
-                    personnel_count: assignPersonnel,
-                    task: `Assigned by Admin: ${selectedReport.title}`
+                    status: 'Active',
+                    claimed_by_team_id: parseInt(assignTeamId)
                 })
             });
             if (response.ok) {
-                toast.success(`Assigned to ${team.name}`);
+                const updated = await response.json();
+                toast.success(`Assigned to ${team.name} — Status set to Active`);
                 setAssignTeamId('');
-                setAssignPersonnel(1);
-                fetchReports();
+                setSelectedReport(updated);
+                setReports(prev => prev.map(r => r.id === updated.id ? updated : r));
                 fetchTeams();
-                // Refresh selected report
-                const rr = await fetch(`http://127.0.0.1:5000/api/v1/reports`);
-                if (rr.ok) {
-                    const allReports = await rr.json();
-                    const fresh = allReports.find(r => r.id === selectedReport.id);
-                    if (fresh) setSelectedReport(fresh);
-                    setReports(allReports);
-                }
             } else {
                 const err = await response.json();
                 toast.error(err.error || "Failed to assign team");
@@ -210,7 +201,6 @@ const DamageReports = ({ initialHighlightId }) => {
         setEditDisasterType(report.disaster_type || '');
         setEditNotes(report.notes || '');
         setAssignTeamId('');
-        setAssignPersonnel(1);
     };
 
     const closeModal = () => {
@@ -478,33 +468,23 @@ const DamageReports = ({ initialHighlightId }) => {
                             {/* Admin Assign to Team */}
                             <div className="mt-4 bg-yellow-50 p-4 rounded-xl border border-yellow-200">
                                 <label className="block text-xs font-bold text-yellow-800 uppercase tracking-wider mb-2 flex items-center gap-1"><Users size={12} /> Assign to Team</label>
+                                <p className="text-[10px] text-yellow-700 mb-2">Assigning a team will set this report to Active. The team decides how many personnel to deploy.</p>
                                 <div className="flex gap-2 items-end">
                                     <div className="flex-1">
                                         <select
                                             value={assignTeamId}
-                                            onChange={(e) => {
-                                                setAssignTeamId(e.target.value);
-                                                const t = teams.find(t => t.id === parseInt(e.target.value));
-                                                if (t) setAssignPersonnel(Math.min(3, t.available_personnel ?? t.personnel_count));
-                                            }}
+                                            onChange={(e) => setAssignTeamId(e.target.value)}
                                             className="w-full p-2 border border-yellow-300 rounded-lg text-sm bg-white"
                                         >
                                             <option value="">Select team...</option>
-                                            {teams.map(t => {
-                                                const avail = t.available_personnel ?? t.personnel_count;
-                                                return (
-                                                    <option key={t.id} value={t.id} disabled={avail === 0}>
-                                                        {t.name} ({t.department}) — {avail} available
-                                                    </option>
-                                                );
-                                            })}
+                                            {teams.map(t => (
+                                                <option key={t.id} value={t.id}>
+                                                    {t.name} ({t.department}) — {t.available_personnel ?? t.personnel_count} available
+                                                </option>
+                                            ))}
                                         </select>
                                     </div>
-                                    <div className="w-20">
-                                        <label className="block text-[10px] text-yellow-700 mb-0.5">Pax</label>
-                                        <input type="number" min={1} max={assignTeamId ? (teams.find(t => t.id === parseInt(assignTeamId))?.available_personnel || 1) : 1} value={assignPersonnel} onChange={(e) => setAssignPersonnel(parseInt(e.target.value) || 1)} className="w-full p-2 border border-yellow-300 rounded-lg text-sm" />
-                                    </div>
-                                    <button onClick={handleAssignTeam} disabled={!assignTeamId} className={`flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-bold transition-colors ${assignTeamId ? 'bg-yellow-600 text-white hover:bg-yellow-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
+                                    <button onClick={handleAssignTeam} disabled={!assignTeamId} className={`flex items-center gap-1 px-4 py-2 rounded-lg text-xs font-bold transition-colors ${assignTeamId ? 'bg-yellow-600 text-white hover:bg-yellow-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
                                         <Send size={12} /> Assign
                                     </button>
                                 </div>

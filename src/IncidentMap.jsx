@@ -75,16 +75,22 @@ const incidents = [
 
 // 1. Define the component function
 const IncidentMap = ({ reports = [], teams = [] }) => {
+    const settingsLat = parseFloat(localStorage.getItem('quickdart_mapCenterLat'));
+    const settingsLng = parseFloat(localStorage.getItem('quickdart_mapCenterLng'));
+    const settingsZoom = parseInt(localStorage.getItem('quickdart_mapZoom'));
+    const showCoverage = localStorage.getItem('quickdart_showCoverageRadius') !== 'false';
+
+    const mapCenter = (settingsLat && settingsLng) ? [settingsLat, settingsLng] : INTRAMUROS_CENTER;
+    const mapZoom = settingsZoom || 14;
+
     return (
-        <MapContainer 
-            center={INTRAMUROS_CENTER} 
-            zoom={14} 
-            minZoom={13} // Prevent zooming out too far (seeing the whole world)
-            maxZoom={18} // Prevent zooming in too close
-            maxBounds={INTRAMUROS_BOUNDS} // Lock view to Marilao
-            maxBoundsViscosity={1.0} // How "sticky" the bounds are (1.0 = hard stop)
-            scrollWheelZoom={true} 
-            style={{ height: "100%", width: "100%", borderRadius: "0.5rem", zIndex: 0 }} // Explicit style helps prevent size issues
+        <MapContainer
+            center={mapCenter}
+            zoom={mapZoom}
+            minZoom={10}
+            maxZoom={18}
+            scrollWheelZoom={true}
+            style={{ height: "100%", width: "100%", borderRadius: "0.5rem", zIndex: 0 }}
         >
 
             <MapFix />
@@ -126,11 +132,12 @@ const IncidentMap = ({ reports = [], teams = [] }) => {
                 if (!lat || !lng) return null;
 
                 const available = (team.available_personnel != null) ? team.available_personnel : team.personnel;
+                const shouldShowCoverage = showCoverage;
                 const total = team.personnel || 0;
 
                 return (
                     <React.Fragment key={`team-${team.id}`}>
-                        <Circle
+                        {shouldShowCoverage && <Circle
                             center={[lat, lng]}
                             radius={(team.coverage_radius_km || 5) * 1000}
                             pathOptions={{
@@ -140,7 +147,7 @@ const IncidentMap = ({ reports = [], teams = [] }) => {
                                 weight: 1.5,
                                 dashArray: '6 4',
                             }}
-                        />
+                        />}
                         <Marker position={[lat, lng]} icon={TeamIcon}>
                             <Popup>
                                 <div className="text-sm min-w-[160px]">

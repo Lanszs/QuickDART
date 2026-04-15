@@ -784,13 +784,48 @@ def predict_from_frames(frames, sid=None):
             "damage_heatmap": gradcam_data.get("damage_heatmap"),
         })
 
-    # Majority vote for final classification
+    # ── Confidence & consensus thresholds ──
+    CONFIDENCE_THRESHOLD = 50.0       # Below this, treat as "No Disaster"
+    SUPERMAJORITY_RATIO = 0.6         # ≥60% of frames must agree on a disaster type
+    AVG_CONFIDENCE_FLOOR = 45.0       # Average confidence across ALL frames must exceed this
+
+    # Majority vote for initial classification
     final_type_idx = max(set(type_votes), key=type_votes.count)
-    is_final_no_disaster = TYPE_CLASS_NAMES[final_type_idx] == 'No Disaster'
+    winning_vote_count = type_votes.count(final_type_idx)
 
     # Average confidence only for frames that voted for the winning class
     winning_type_confs = [c for c, v in zip(type_confidences, type_votes) if v == final_type_idx]
     avg_type_confidence = sum(winning_type_confs) / len(winning_type_confs)
+
+    # Average confidence across ALL frames (not just winners)
+    avg_all_confidence = sum(type_confidences) / len(type_confidences)
+
+    # ── Stricter video consensus checks ──
+    # Override to "No Disaster" if the prediction is unreliable:
+    #   1. Winning confidence is too low
+    #   2. Winning class doesn't have supermajority of frames
+    #   3. Average confidence across all frames is too low (model is guessing)
+    no_disaster_idx = TYPE_CLASS_NAMES.index('No Disaster')
+    is_disaster_prediction = TYPE_CLASS_NAMES[final_type_idx] != 'No Disaster'
+
+    overridden_to_no_disaster = False
+    if is_disaster_prediction:
+        vote_ratio = winning_vote_count / total
+        if avg_type_confidence < CONFIDENCE_THRESHOLD:
+            print(f"[CONSENSUS] Override to No Disaster: winning confidence {avg_type_confidence:.1f}% < {CONFIDENCE_THRESHOLD}% threshold", flush=True)
+            overridden_to_no_disaster = True
+        elif vote_ratio < SUPERMAJORITY_RATIO:
+            print(f"[CONSENSUS] Override to No Disaster: only {winning_vote_count}/{total} frames ({vote_ratio*100:.0f}%) agree, need {SUPERMAJORITY_RATIO*100:.0f}%", flush=True)
+            overridden_to_no_disaster = True
+        elif avg_all_confidence < AVG_CONFIDENCE_FLOOR:
+            print(f"[CONSENSUS] Override to No Disaster: avg confidence across all frames {avg_all_confidence:.1f}% < {AVG_CONFIDENCE_FLOOR}% floor", flush=True)
+            overridden_to_no_disaster = True
+
+    if overridden_to_no_disaster:
+        final_type_idx = no_disaster_idx
+        avg_type_confidence = 100.0 - avg_all_confidence  # Invert: low disaster confidence = high no-disaster confidence
+
+    is_final_no_disaster = TYPE_CLASS_NAMES[final_type_idx] == 'No Disaster'
 
     if is_final_no_disaster:
         final_damage_idx = -1
@@ -827,7 +862,8 @@ def predict_from_frames(frames, sid=None):
         "damage_confidence": round(avg_damage_confidence, 2),
         "type_distribution": type_distribution,
         "damage_distribution": damage_distribution,
-        "per_frame_predictions": per_frame_predictions
+        "per_frame_predictions": per_frame_predictions,
+        "consensus_override": overridden_to_no_disaster
     }
 
 
@@ -927,7 +963,8 @@ def analyze_image():
                 "per_frame_predictions": result["per_frame_predictions"],
                 "video_duration": round(video_duration, 2),
                 "fps": round(fps, 2),
-                "total_analyzed_frames": len(frames)
+                "total_analyzed_frames": len(frames),
+                "consensus_override": result.get("consensus_override", False)
             })
 
         else:
@@ -944,6 +981,18 @@ def analyze_image():
                 type_conf, type_pred = torch.max(type_probs, 1)
 
             detected_type = TYPE_CLASS_NAMES[type_pred.item()]
+            type_conf_pct = round(type_conf.item() * 100, 2)
+
+            # ── Confidence threshold gate for images ──
+            # If the model's best guess is a disaster but confidence is below 50%,
+            # the model is likely guessing — override to "No Disaster"
+            IMAGE_CONFIDENCE_THRESHOLD = 50.0
+            consensus_override = False
+            if detected_type != 'No Disaster' and type_conf_pct < IMAGE_CONFIDENCE_THRESHOLD:
+                print(f"[THRESHOLD] Override to No Disaster: image confidence {type_conf_pct:.1f}% < {IMAGE_CONFIDENCE_THRESHOLD}% threshold", flush=True)
+                detected_type = 'No Disaster'
+                consensus_override = True
+
             is_no_disaster = detected_type == 'No Disaster'
 
             if is_no_disaster:
@@ -1002,17 +1051,18 @@ def analyze_image():
 
             return jsonify({
                 "type": detected_type,
-                "confidence": round(type_conf.item() * 100, 2),
+                "confidence": type_conf_pct if not consensus_override else round(100.0 - type_conf_pct, 2),
                 "damage": detected_damage,
                 "damage_confidence": damage_conf_val,
                 "image_url": image_url,
                 "source": "image",
                 "type_distribution": type_distribution,
                 "damage_distribution": damage_distribution,
+                "consensus_override": consensus_override,
                 "per_frame_predictions": [{
                     "frame_index": 0,
                     "type": detected_type,
-                    "type_conf": round(type_conf.item() * 100, 2),
+                    "type_conf": type_conf_pct if not consensus_override else round(100.0 - type_conf_pct, 2),
                     "damage": detected_damage,
                     "damage_conf": damage_conf_val,
                     "type_bbox": gradcam_data.get("type_bbox"),
@@ -1184,6 +1234,11 @@ def update_report(report_id):
         if 'notes' in data:
             report.notes = data['notes']
             print(f"   Notes updated", flush=True)
+
+        if 'claimed_by_team_id' in data:
+            old_claimed = report.claimed_by_team_id
+            report.claimed_by_team_id = data['claimed_by_team_id']
+            print(f"   Claimed by team: {old_claimed} → {report.claimed_by_team_id}", flush=True)
 
         session.commit()
         session.refresh(report)
@@ -1495,12 +1550,24 @@ def delete_team(team_id):
             print("❌ Team not found in DB")
             return jsonify({"error": "Team not found"}), 404
         
-        # 1. DELETE Linked Assets (Instead of unlinking)
-        from models.resources import Asset
+        # 0a. UNCLAIM reports that reference this team
+        claimed_reports = session.query(Report).filter(Report.claimed_by_team_id == team_id).all()
+        print(f"   > Found {len(claimed_reports)} claimed reports. Unclaiming...")
+        for r in claimed_reports:
+            r.claimed_by_team_id = None
+
+        # 0b. DELETE Linked Deployments
+        from models.resources import Asset, Deployment
+        deployments = session.query(Deployment).filter(Deployment.team_id == team_id).all()
+        print(f"   > Found {len(deployments)} linked deployments. Deleting...")
+        for dep in deployments:
+            session.delete(dep)
+
+        # 1. DELETE Linked Assets
         assets = session.query(Asset).filter(Asset.team_id == team_id).all()
         print(f"   > Found {len(assets)} linked assets. Deleting...")
         for asset in assets:
-            session.delete(asset) # <--- This now deletes the asset row entirely
+            session.delete(asset)
             
         # 2. DELETE Linked Users
         from models.user import User

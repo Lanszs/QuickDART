@@ -63,7 +63,8 @@ const AssetsTeams = () => {
 
     useEffect(() => {
         fetchData();
-        const interval = setInterval(fetchData, 30000);
+        const refreshMs = (parseInt(localStorage.getItem('quickdart_autoRefreshInterval')) || 30) * 1000;
+        const interval = setInterval(fetchData, refreshMs);
 
         const socket = io('http://127.0.0.1:5000');
         
@@ -257,9 +258,20 @@ const AssetsTeams = () => {
     };
 
    const handleDeleteTeam = async (id) => {
-        if (!window.confirm("Delete this team?")) return;
-        await fetch(`http://127.0.0.1:5000/api/v1/teams/${id}`, { method: 'DELETE' });
-        fetchData();
+        if (!window.confirm("Delete this team and its user account? This cannot be undone.")) return;
+        try {
+            const response = await fetch(`http://127.0.0.1:5000/api/v1/teams/${id}`, { method: 'DELETE' });
+            if (response.ok) {
+                toast.success("Team deleted successfully");
+                await fetchData();
+            } else {
+                const err = await response.json().catch(() => ({}));
+                toast.error(err.error || "Failed to delete team");
+            }
+        } catch (error) {
+            console.error("Delete team error:", error);
+            toast.error("Network error deleting team");
+        }
     };
 
    

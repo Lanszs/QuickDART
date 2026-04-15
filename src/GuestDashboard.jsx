@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Camera, MapPin, AlertTriangle, Send, FileText, XCircle, CheckCircle, ArrowLeft, Activity, Clock, Loader2, Search, AlertCircle, Video, X, Circle, StopCircle } from 'lucide-react';
 import { io } from 'socket.io-client';
+import { generateAIDescription } from './lib/generateAIDescription';
 
 const socket = io('http://127.0.0.1:5000');
 
@@ -492,49 +493,6 @@ const GuestDashboard = ({ onBack }) => {
         const file = event.target.files[0];
         if (!file) return;
         analyzeFile(file);
-    };
-
-    // --- AUTO-GENERATED AI DESCRIPTION ---
-    const generateAIDescription = (result) => {
-        if (!result) return "No analysis data available.";
-
-        const conf = typeof result.confidence === 'number' ? result.confidence.toFixed(1) : result.confidence;
-        const damageConf = typeof result.damage_confidence === 'number' ? ` (${result.damage_confidence.toFixed(1)}% confidence)` : '';
-
-        // Source context
-        const sourceText = result.source === 'video'
-            ? `uploaded video${result.total_analyzed_frames ? ` (${result.total_analyzed_frames} frames analyzed)` : ''}`
-            : 'uploaded image';
-
-        let desc = `AI analysis of ${sourceText} detected ${result.type} with ${conf}% confidence. Damage assessed as ${result.damage}${damageConf}.`;
-
-        // For videos with type distribution, check if multiple types were detected
-        if (result.source === 'video' && result.type_distribution) {
-            const activeTypes = Object.entries(result.type_distribution)
-                .filter(([, pct]) => pct > 0)
-                .sort((a, b) => b[1] - a[1]);
-
-            if (activeTypes.length > 1) {
-                const breakdown = activeTypes.map(([name, pct]) => `${name} ${pct}%`).join(', ');
-                desc += ` Multiple disaster indicators found across frames: ${breakdown}.`;
-            } else {
-                desc += ` Consistent ${result.type} detection across all analyzed frames.`;
-            }
-        }
-
-        // For videos with damage distribution, note if mixed
-        if (result.source === 'video' && result.damage_distribution) {
-            const activeDamage = Object.entries(result.damage_distribution)
-                .filter(([, pct]) => pct > 0)
-                .sort((a, b) => b[1] - a[1]);
-
-            if (activeDamage.length > 1) {
-                const breakdown = activeDamage.map(([name, pct]) => `${name} ${pct}%`).join(', ');
-                desc += ` Damage levels varied across frames: ${breakdown}.`;
-            }
-        }
-
-        return desc;
     };
 
     // --- 3. SUBMIT REPORT (WITH VALIDATION) ---

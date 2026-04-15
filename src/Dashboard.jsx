@@ -27,6 +27,8 @@ import { io } from 'socket.io-client';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import Statistics from './Statistics';
+import SettingsPage from './Settings';
+import { generateAIDescription } from './lib/generateAIDescription';
 
 // Initialize Socket outside component
 const socket = io('http://127.0.0.1:5000');
@@ -184,30 +186,6 @@ const Dashboard = ({ userRole, onLogout }) => {
     // This creates a list that EXCLUDES "Cleared" items
     const activeIncidentLog = reports.filter(r => r.status !== 'Cleared');
 
-    const generateAIDescription = (result) => {
-        if (!result) return "No analysis data available.";
-        const conf = typeof result.confidence === 'number' ? result.confidence.toFixed(1) : result.confidence;
-        const damageConf = typeof result.damage_confidence === 'number' ? ` (${result.damage_confidence.toFixed(1)}% confidence)` : '';
-        const sourceText = result.source === 'video'
-            ? `uploaded video${result.total_analyzed_frames ? ` (${result.total_analyzed_frames} frames analyzed)` : ''}`
-            : 'uploaded image';
-        let desc = `AI analysis of ${sourceText} detected ${result.type} with ${conf}% confidence. Damage assessed as ${result.damage}${damageConf}.`;
-        if (result.source === 'video' && result.type_distribution) {
-            const activeTypes = Object.entries(result.type_distribution).filter(([, pct]) => pct > 0).sort((a, b) => b[1] - a[1]);
-            if (activeTypes.length > 1) {
-                desc += ` Multiple disaster indicators: ${activeTypes.map(([n, p]) => `${n} ${p}%`).join(', ')}.`;
-            } else {
-                desc += ` Consistent ${result.type} detection across all frames.`;
-            }
-        }
-        if (result.source === 'video' && result.damage_distribution) {
-            const activeDamage = Object.entries(result.damage_distribution).filter(([, pct]) => pct > 0).sort((a, b) => b[1] - a[1]);
-            if (activeDamage.length > 1) {
-                desc += ` Damage levels: ${activeDamage.map(([n, p]) => `${n} ${p}%`).join(', ')}.`;
-            }
-        }
-        return desc;
-    };
 
     const saveReport = async () => {
         if (!analysisResult) return;
@@ -498,7 +476,7 @@ const Dashboard = ({ userRole, onLogout }) => {
                     <NavButton active={activeTab === 'statistics'} onClick={() => handleNavigation('statistics')} icon={<BarChart2 size={18} />} label="Analytics" />
                     
                     <div className="flex-grow"></div>
-                    <NavButton icon={<Settings size={18} />} label="Settings" />
+                    <NavButton active={activeTab === 'settings'} onClick={() => handleNavigation('settings')} icon={<Settings size={18} />} label="Settings" />
                 </nav>
 
                 {/* --- Main Content --- */}
@@ -629,6 +607,9 @@ const Dashboard = ({ userRole, onLogout }) => {
 
                     {/* VIEW 5: STATISTICS */}
                     {activeTab === 'statistics' && <Statistics reports={reports} teams={teams} />}
+
+                    {/* VIEW 6: SETTINGS */}
+                    {activeTab === 'settings' && <SettingsPage />}
 
                 </main>
                 <ToastContainer />
