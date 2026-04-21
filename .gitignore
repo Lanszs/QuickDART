@@ -26,3 +26,21 @@ database files (if local, not recommended for real DB)
 
 # uploaded media files
 backend/static/uploads/
+
+# training datasets (too large for git)
+dataset_damage_level/
+dataset_damage_earthquake/
+dataset_damage_fire/
+dataset_damage_flood/
+dataset_disaster_type/
+sorted_frames/
+extracted_frames/
+backend/dataset_combined.zip
+backend/xview2_combined.tgz
+
+# React build output
+build/
+
+# Claude Code local config
+.claude/
+backend/.claude/
