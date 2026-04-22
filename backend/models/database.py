@@ -4,7 +4,7 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 
 # --- 1. Database Configuration ---
 
-DEFAULT_DB_URL = "postgresql://postgres.udmnaaqvdlckyhexuyqv:OgagbaU@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres"
+DEFAULT_DB_URL = "postgresql://postgres.udmnaaqvdlckyhexuyqv:31231231232dsada@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres"
 
 
 DATABASE_URL = os.environ.get("DATABASE_URL", DEFAULT_DB_URL)
