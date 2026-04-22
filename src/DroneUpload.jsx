@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { API_BASE } from './lib/config';
 import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import {
@@ -89,7 +88,7 @@ const DroneUpload = ({ myTeam, currentTeamId, onReportSaved }) => {
 
             setItems(prev => prev.map(i => i.id === id ? { ...i, status: 'analyzing' } : i));
 
-            const response = await fetch(`${API_BASE}/api/v1/analyze`, {
+            const response = await fetch('http://127.0.0.1:5000/api/v1/analyze', {
                 method: 'POST',
                 body: formData,
             });
@@ -129,7 +128,7 @@ const DroneUpload = ({ myTeam, currentTeamId, onReportSaved }) => {
         };
 
         try {
-            const response = await fetch(`${API_BASE}/api/v1/reports`, {
+            const response = await fetch('http://127.0.0.1:5000/api/v1/reports', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),

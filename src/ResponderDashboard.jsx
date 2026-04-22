@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { API_BASE } from './lib/config';
 import { Camera, MapPin, CheckCircle, User, LogOut, Activity,
     FileText, Clock, AlertCircle, ChevronRight, ChevronDown, XCircle, ImageIcon, Eye, EyeOff,
     MessageSquare, Send, Zap, Coffee, Truck, Radio, Package, Heart, Shield,
@@ -11,7 +10,7 @@ import { io } from 'socket.io-client';
 import { toast } from 'react-toastify';
 
 // Initialize Socket
-const socket = io(API_BASE);
+const socket = io('http://127.0.0.1:5000');
 
 const ResponderDashboard = ({ onLogout }) => {
     const [activeTab, setActiveTab] = useState('tasks'); 
@@ -69,11 +68,11 @@ const ResponderDashboard = ({ onLogout }) => {
     const fetchData = async () => {
         try {
             // 1. Fetch Geofenced Reports
-            const repResponse = await fetch(`${API_BASE}/api/v1/reports?team_id=${currentTeamId}`);
+            const repResponse = await fetch(`http://127.0.0.1:5000/api/v1/reports?team_id=${currentTeamId}`);
             if (repResponse.ok) setReports(await repResponse.json());
 
             // 2. Fetch Team Info
-            const resResponse = await fetch(`${API_BASE}/api/v1/resources`);
+            const resResponse = await fetch('http://127.0.0.1:5000/api/v1/resources');
             if (resResponse.ok) {
                 const data = await resResponse.json();
                 const team = data.teams.find(t => t.id === parseInt(currentTeamId));
@@ -81,7 +80,7 @@ const ResponderDashboard = ({ onLogout }) => {
             }
 
             // 3. Fetch Active Deployments
-            const depResponse = await fetch(`${API_BASE}/api/v1/teams/${currentTeamId}/deployments?status=Active`);
+            const depResponse = await fetch(`http://127.0.0.1:5000/api/v1/teams/${currentTeamId}/deployments?status=Active`);
             if (depResponse.ok) setActiveDeployments(await depResponse.json());
         } catch (error) {
             console.error("Failed to fetch data:", error);
@@ -96,7 +95,7 @@ const ResponderDashboard = ({ onLogout }) => {
             try {
                 console.log("🔄 [INIT] Fetching Initial Data...");
                 // 1. Reports
-                const repRes = await fetch(`${API_BASE}/api/v1/reports?team_id=${currentTeamId}`);
+                const repRes = await fetch(`http://127.0.0.1:5000/api/v1/reports?team_id=${currentTeamId}`);
                 if (repRes.ok) {
                     const allReports = await repRes.json();
                     // Initial Filter: No Pending
@@ -105,7 +104,7 @@ const ResponderDashboard = ({ onLogout }) => {
                 }
 
                 // 2. Team Info
-                const resRes = await fetch(`${API_BASE}/api/v1/resources`);
+                const resRes = await fetch('http://127.0.0.1:5000/api/v1/resources');
                 if (resRes.ok) {
                     const data = await resRes.json();
                     const team = data.teams.find(t => t.id === parseInt(currentTeamId)); 
@@ -114,13 +113,13 @@ const ResponderDashboard = ({ onLogout }) => {
                 }
 
                 // 3. Active Deployments
-                const depRes = await fetch(`${API_BASE}/api/v1/teams/${currentTeamId}/deployments?status=Active`);
+                const depRes = await fetch(`http://127.0.0.1:5000/api/v1/teams/${currentTeamId}/deployments?status=Active`);
                 if (depRes.ok) {
                     setActiveDeployments(await depRes.json());
                 }
 
                 // 4. Chat History
-                const chatRes = await fetch(`${API_BASE}/api/v1/chat/history/team_${currentTeamId}`);
+                const chatRes = await fetch(`http://127.0.0.1:5000/api/v1/chat/history/team_${currentTeamId}`);
                 if (chatRes.ok) {
                     setMessages(await chatRes.json());
                 }
@@ -143,7 +142,7 @@ const ResponderDashboard = ({ onLogout }) => {
         socket.on('resource_updated', (update) => {
             if (update.type === 'team' || update.type === 'asset') {
                 // Refresh team info to get new status/assets
-                fetch(`${API_BASE}/api/v1/resources`)
+                fetch(`http://127.0.0.1:5000/api/v1/resources`)
                     .then(res => res.json())
                     .then(data => {
                         const team = data.teams.find(t => t.id === parseInt(currentTeamId)); 
@@ -204,10 +203,10 @@ const ResponderDashboard = ({ onLogout }) => {
 
         // 6. Deployment Completed — refresh deployments and team data
         socket.on('deployment_completed', () => {
-            fetch(`${API_BASE}/api/v1/teams/${currentTeamId}/deployments?status=Active`)
+            fetch(`http://127.0.0.1:5000/api/v1/teams/${currentTeamId}/deployments?status=Active`)
                 .then(res => res.json())
                 .then(deps => setActiveDeployments(deps));
-            fetch(`${API_BASE}/api/v1/resources`)
+            fetch('http://127.0.0.1:5000/api/v1/resources')
                 .then(res => res.json())
                 .then(data => {
                     const team = data.teams.find(t => t.id === parseInt(currentTeamId));
@@ -338,7 +337,7 @@ const ResponderDashboard = ({ onLogout }) => {
         setShowTaskModal(false);
 
         try {
-            const res = await fetch(`${API_BASE}/api/v1/teams/${myTeam.id}/deployments`, {
+            const res = await fetch(`http://127.0.0.1:5000/api/v1/teams/${myTeam.id}/deployments`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -398,7 +397,7 @@ const ResponderDashboard = ({ onLogout }) => {
         }
 
         try {
-            const res = await fetch(`${API_BASE}/api/v1/deployments/${deployment.id}/complete`, {
+            const res = await fetch(`http://127.0.0.1:5000/api/v1/deployments/${deployment.id}/complete`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' }
             });
@@ -475,7 +474,7 @@ const ResponderDashboard = ({ onLogout }) => {
     // --- ASSET STATUS UPDATE ---
     const handleAssetStatusChange = async (assetId, newStatus) => {
         try {
-            await fetch(`${API_BASE}/api/v1/assets/${assetId}/deploy`, {
+            await fetch(`http://127.0.0.1:5000/api/v1/assets/${assetId}/deploy`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: newStatus })
@@ -492,7 +491,7 @@ const ResponderDashboard = ({ onLogout }) => {
         if (!newAsset.name) return;
         
         try {
-            const response = await fetch(`${API_BASE}/api/v1/assets`, {
+            const response = await fetch('http://127.0.0.1:5000/api/v1/assets', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
@@ -522,7 +521,7 @@ const ResponderDashboard = ({ onLogout }) => {
             // Loop through selected IDs and delete them one by one
             // (Ideally backend should support bulk delete, but this works for now)
             const deletePromises = inventorySelection.map(id => 
-                fetch(`${API_BASE}/api/v1/assets/${id}`, { method: 'DELETE' })
+                fetch(`http://127.0.0.1:5000/api/v1/assets/${id}`, { method: 'DELETE' })
             );
 
             await Promise.all(deletePromises);
@@ -580,7 +579,7 @@ const ResponderDashboard = ({ onLogout }) => {
     const updateMyStatus = async (newStatus) => {
         if (!myTeam) return;
         try {
-            await fetch(`${API_BASE}/api/v1/teams/${myTeam.id}/deploy`, {
+            await fetch(`http://127.0.0.1:5000/api/v1/teams/${myTeam.id}/deploy`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: newStatus, task: "" })

@@ -1,5 +1,4 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { API_BASE } from './lib/config';
 import { Truck, Users, Wrench, CheckCircle, Clock, Activity, RefreshCw, Radio, 
     Droplet, Flame, Mountain, Heart, Package, Phone, Shield, Dog, Send, Navigation, XCircle, Plus, Trash2, 
     ChevronRight, Box, Lock, Mail, MapPin, Search, Loader2 } from 'lucide-react';
@@ -48,7 +47,7 @@ const AssetsTeams = () => {
 
     const fetchData = async () => {
         try {
-            const response = await fetch(`${API_BASE}/api/v1/resources`);
+            const response = await fetch('http://127.0.0.1:5000/api/v1/resources');
             if (response.ok) {
                 const result = await response.json();
                 setData(result);
@@ -67,7 +66,7 @@ const AssetsTeams = () => {
         const refreshMs = (parseInt(localStorage.getItem('quickdart_autoRefreshInterval')) || 30) * 1000;
         const interval = setInterval(fetchData, refreshMs);
 
-        const socket = io(API_BASE);
+        const socket = io('http://127.0.0.1:5000');
         
         socket.on('resource_updated', (update) => {
             fetchData(); 
@@ -236,7 +235,7 @@ const AssetsTeams = () => {
         }
 
         try {
-            const response = await fetch(`${API_BASE}/api/v1/teams`, {
+            const response = await fetch('http://127.0.0.1:5000/api/v1/teams', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newTeam)
@@ -261,7 +260,7 @@ const AssetsTeams = () => {
    const handleDeleteTeam = async (id) => {
         if (!window.confirm("Delete this team and its user account? This cannot be undone.")) return;
         try {
-            const response = await fetch(`${API_BASE}/api/v1/teams/${id}`, { method: 'DELETE' });
+            const response = await fetch(`http://127.0.0.1:5000/api/v1/teams/${id}`, { method: 'DELETE' });
             if (response.ok) {
                 toast.success("Team deleted successfully");
                 await fetchData();
@@ -278,13 +277,13 @@ const AssetsTeams = () => {
    
     const handleDeleteAsset = async (id) => {
         if (!window.confirm("Delete this asset?")) return;
-        await fetch(`${API_BASE}/api/v1/assets/${id}`, { method: 'DELETE' });
+        await fetch(`http://127.0.0.1:5000/api/v1/assets/${id}`, { method: 'DELETE' });
         fetchData();
     };
 
     
    const handleDeployTeam = async (teamId, newStatus, task) => {
-        await fetch(`${API_BASE}/api/v1/teams/${teamId}/deploy`, {
+        await fetch(`http://127.0.0.1:5000/api/v1/teams/${teamId}/deploy`, {
             method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, task: task })
         });
         toast.success("Team updated");
@@ -293,7 +292,7 @@ const AssetsTeams = () => {
     };
 
     const handleDeployAsset = async (assetId, newStatus, location) => {
-        await fetch(`${API_BASE}/api/v1/assets/${assetId}/deploy`, {
+        await fetch(`http://127.0.0.1:5000/api/v1/assets/${assetId}/deploy`, {
             method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus, location })
         });
         toast.success("Asset updated");
@@ -308,7 +307,7 @@ const AssetsTeams = () => {
             : `/api/v1/assets/${selectedItem.id}/notify`;
 
         try {
-            await fetch(`${API_BASE}${endpoint}`, {
+            await fetch(`http://127.0.0.1:5000${endpoint}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ message: notifyMessage })
@@ -588,7 +587,7 @@ const AssetsTeams = () => {
                     <textarea value={notifyMessage} onChange={(e) => setNotifyMessage(e.target.value)} placeholder="Message..." className="w-full p-3 border rounded mb-4" rows="3" />
                     <button onClick={() => {
                         if (!notifyMessage.trim() || !selectedItem) return;
-                        const socket = io(API_BASE);
+                        const socket = io('http://127.0.0.1:5000');
                         socket.emit('send_message', {
                             sender: 'Admin',
                             target_room: `team_${selectedItem.id}`,

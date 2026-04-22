@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { API_BASE } from './lib/config';
 import { FileText, AlertTriangle, MapPin, Calendar, Clock, XCircle, ImageIcon, Activity, CheckCircle, AlertCircle, Loader2, ChevronLeft, ChevronRight, Users, Save, Send } from 'lucide-react';
 import { toast } from 'react-toastify';
 import VideoAnalysisPlayer from './components/VideoAnalysisPlayer';
@@ -39,7 +38,7 @@ const DamageReports = ({ initialHighlightId }) => {
     // Fetch Reports
     const fetchReports = async () => {
         try {
-            const response = await fetch(`${API_BASE}/api/v1/reports`);
+            const response = await fetch('http://127.0.0.1:5000/api/v1/reports');
             if (response.ok) {
                 const data = await response.json();
                 setReports(data);
@@ -59,7 +58,7 @@ const DamageReports = ({ initialHighlightId }) => {
 
     const fetchTeams = async () => {
         try {
-            const response = await fetch(`${API_BASE}/api/v1/resources`);
+            const response = await fetch('http://127.0.0.1:5000/api/v1/resources');
             if (response.ok) {
                 const data = await response.json();
                 setTeams(data.teams || []);
@@ -79,7 +78,7 @@ const DamageReports = ({ initialHighlightId }) => {
     const updateReportStatus = async (newStatus) => {
         if (!selectedReport) return;
         try {
-            const response = await fetch(`${API_BASE}/api/v1/reports/${selectedReport.id}`, {
+            const response = await fetch(`http://127.0.0.1:5000/api/v1/reports/${selectedReport.id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: newStatus })
@@ -112,7 +111,7 @@ const DamageReports = ({ initialHighlightId }) => {
         }
 
         try {
-            const response = await fetch(`${API_BASE}/api/v1/reports/${selectedReport.id}`, {
+            const response = await fetch(`http://127.0.0.1:5000/api/v1/reports/${selectedReport.id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -137,7 +136,7 @@ const DamageReports = ({ initialHighlightId }) => {
         if (!team) return;
 
         try {
-            const response = await fetch(`${API_BASE}/api/v1/reports/${selectedReport.id}`, {
+            const response = await fetch(`http://127.0.0.1:5000/api/v1/reports/${selectedReport.id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
