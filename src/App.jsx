@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { API_BASE } from './lib/config';
 import Dashboard from './Dashboard';
 import ResponderDashboard from './ResponderDashboard';
 import GuestDashboard from './GuestDashboard';
@@ -106,14 +107,14 @@ const Login = ({ onLoginSuccess }) => {
       if (error) throw error;
 
       // 2. DETERMINE ROLE
-     const response = await fetch('http://127.0.0.1:5000/api/v1/login', {
+     const response = await fetch(`${API_BASE}/api/v1/login`, {
          method: 'POST',
          headers: { 'Content-Type': 'application/json' },
          body: JSON.stringify({ user_id: email, password: "managed_by_supabase" }) 
          // Note: We bypass password check in backend if supabase succeeds, or implement proper check
       });
 
-      const localAuthResponse = await fetch('http://127.0.0.1:5000/api/v1/login', {
+      const localAuthResponse = await fetch(`${API_BASE}/api/v1/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ user_id: email, password: "managed_by_supabase" })
@@ -207,7 +208,7 @@ const App = () => {
         
         // FETCH DETAILS ON AUTO-LOGIN TOO
         try {
-            const response = await fetch('http://127.0.0.1:5000/api/v1/login', {
+            const response = await fetch(`${API_BASE}/api/v1/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ user_id: userEmail, password: "managed_by_supabase" })

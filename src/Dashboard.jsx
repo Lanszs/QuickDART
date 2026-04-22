@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { API_BASE } from './lib/config';
 import IncidentMap from './IncidentMap';
 import AssetsTeams from './AssetsTeams';
 import { 
@@ -31,7 +32,7 @@ import SettingsPage from './Settings';
 import { generateAIDescription } from './lib/generateAIDescription';
 
 // Initialize Socket outside component
-const socket = io('http://127.0.0.1:5000');
+const socket = io(API_BASE);
 
 const Dashboard = ({ userRole, onLogout }) => {
     // State for Active Tab
@@ -92,7 +93,7 @@ const Dashboard = ({ userRole, onLogout }) => {
     const handleQuickValidate = async (reportId, e) => {
         e.stopPropagation();
         try {
-            const response = await fetch(`http://127.0.0.1:5000/api/v1/reports/${reportId}`, {
+            const response = await fetch(`${API_BASE}/api/v1/reports/${reportId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: 'Active' })
@@ -205,7 +206,7 @@ const Dashboard = ({ userRole, onLogout }) => {
 };
 
         try {
-            const response = await fetch('http://127.0.0.1:5000/api/v1/reports', {
+            const response = await fetch(`${API_BASE}/api/v1/reports`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newReport)
@@ -227,7 +228,7 @@ const Dashboard = ({ userRole, onLogout }) => {
     // Fetch Logic
     const fetchReports = async () => {
         try {
-            const response = await fetch('http://127.0.0.1:5000/api/v1/reports');
+            const response = await fetch(`${API_BASE}/api/v1/reports`);
             if (response.ok) {
                 const data = await response.json();
                 setReports(data);
@@ -242,7 +243,7 @@ const Dashboard = ({ userRole, onLogout }) => {
     // Fetch Teams for Chat List
     const fetchTeams = async () => {
         try {
-            const response = await fetch('http://127.0.0.1:5000/api/v1/resources');
+            const response = await fetch(`${API_BASE}/api/v1/resources`);
             if (response.ok) {
                 const data = await response.json();
                 setTeams(data.teams);
@@ -341,7 +342,7 @@ const Dashboard = ({ userRole, onLogout }) => {
             const teamId = selectedChatTeam.id;
             console.log(`🔄 Fetching history for team_${teamId}...`);
 
-            fetch(`http://127.0.0.1:5000/api/v1/chat/history/team_${teamId}`)
+            fetch(`${API_BASE}/api/v1/chat/history/team_${teamId}`)
                 .then(res => res.json())
                 .then(history => {
                     console.log(`📜 Loaded ${history.length} messages for Team ${teamId}`);
@@ -388,7 +389,7 @@ const Dashboard = ({ userRole, onLogout }) => {
             formData.append('file', file);
 
             try {
-                const response = await fetch('http://127.0.0.1:5000/api/v1/analyze', {
+                const response = await fetch(`${API_BASE}/api/v1/analyze`, {
                     method: 'POST',
                     body: formData,
                 });

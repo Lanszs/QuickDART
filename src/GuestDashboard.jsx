@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { API_BASE } from './lib/config';
 import { Camera, MapPin, AlertTriangle, Send, FileText, XCircle, CheckCircle, ArrowLeft, Activity, Clock, Loader2, Search, AlertCircle, Video, X, Circle, StopCircle } from 'lucide-react';
 import { io } from 'socket.io-client';
 import { generateAIDescription } from './lib/generateAIDescription';
 
-const socket = io('http://127.0.0.1:5000');
+const socket = io(API_BASE);
 
 const GuestDashboard = ({ onBack }) => {
     const [step, setStep] = useState(1); 
@@ -228,7 +229,7 @@ const GuestDashboard = ({ onBack }) => {
         uploadData.append('file', file);
 
         try {
-            const response = await fetch('http://127.0.0.1:5000/api/v1/analyze', {
+            const response = await fetch(`${API_BASE}/api/v1/analyze`, {
                 method: 'POST',
                 body: uploadData,
             });
@@ -529,7 +530,7 @@ const GuestDashboard = ({ onBack }) => {
         console.groupEnd();
 
         try {
-            const response = await fetch('http://127.0.0.1:5000/api/v1/reports', {
+            const response = await fetch(`${API_BASE}/api/v1/reports`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newReport)

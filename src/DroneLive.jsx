@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { API_BASE } from './lib/config';
 import { Video, Play, Square, RefreshCw, AlertCircle, Camera, Save, Loader2 } from 'lucide-react';
 import { io } from 'socket.io-client';
 import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
 import { toast } from 'react-toastify';
 import { generateAIDescription } from './lib/generateAIDescription';
 
-const socket = io('http://127.0.0.1:5000');
+const socket = io(API_BASE);
 
 function LocationMarker({ position, setPosition }) {
     useMapEvents({
@@ -161,7 +162,7 @@ const DroneLive = ({ myTeam, currentTeamId, onReportSaved }) => {
             const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.85));
             const fd = new FormData();
             fd.append('file', blob, `drone-live-${Date.now()}.jpg`);
-            const ar = await fetch('http://127.0.0.1:5000/api/v1/analyze', { method: 'POST', body: fd });
+            const ar = await fetch(`${API_BASE}/api/v1/analyze`, { method: 'POST', body: fd });
             if (!ar.ok) throw new Error('Analyze failed');
             const analysis = await ar.json();
 
@@ -179,7 +180,7 @@ const DroneLive = ({ myTeam, currentTeamId, onReportSaved }) => {
                 claimed_by_team_id: currentTeamId,
                 analysis_metadata: analysis,
             };
-            const rr = await fetch('http://127.0.0.1:5000/api/v1/reports', {
+            const rr = await fetch(`${API_BASE}/api/v1/reports`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
