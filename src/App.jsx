@@ -200,33 +200,8 @@ const App = () => {
   const [session, setSession] = useState(null); 
 
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (session) {
-        const userEmail = session.user.email;
-        
-        // FETCH DETAILS ON AUTO-LOGIN TOO
-        try {
-            const response = await fetch('http://127.0.0.1:5000/api/v1/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ user_id: userEmail, password: "managed_by_supabase" })
-            });
-            
-            if(response.ok) {
-                const userData = await response.json();
-                handleLoginSuccess(session, userData.role, userData.team_id);
-            } else {
-                // Fallback if local db is empty but supabase session exists
-                const userRole = userEmail.includes('admin') ? 'Commander' : 'Responder';
-                handleLoginSuccess(session, userRole, null);
-            }
-        } catch(e) {
-             // Offline fallback
-             const userRole = userEmail.includes('admin') ? 'Commander' : 'Responder';
-             handleLoginSuccess(session, userRole, null);
-        }
-      }
       setIsLoading(false);
     });
 
@@ -238,7 +213,7 @@ const App = () => {
         localStorage.removeItem('user_team_id'); // Cleanup
       }
     });
-  
+
     return () => subscription.unsubscribe();
   }, []);
 
