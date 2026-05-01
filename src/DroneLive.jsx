@@ -207,16 +207,6 @@ const DroneLive = ({ myTeam, currentTeamId, onReportSaved }) => {
                 </div>
             </div>
 
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-900">
-                <div className="font-semibold mb-1">Setup (Phone Relay)</div>
-                <ol className="list-decimal ml-5 space-y-0.5 text-blue-800">
-                    <li>Phone connected to <code className="bg-blue-100 px-1 rounded">GT50-XXXX</code> WiFi, LS drone-wifi app showing feed.</li>
-                    <li>Mirror phone to this laptop (scrcpy for Android, QuickTime for iPhone).</li>
-                    <li>In OBS Studio, add the mirror window as a source → click <b>Start Virtual Camera</b>.</li>
-                    <li>Below, pick <b>OBS Virtual Camera</b> and click Start.</li>
-                </ol>
-            </div>
-
             <div className="bg-white border rounded-lg p-4 space-y-3">
                 <div className="flex items-center gap-2">
                     <Camera size={16} className="text-gray-600" />

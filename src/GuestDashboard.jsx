@@ -755,13 +755,13 @@ const GuestDashboard = ({ onBack }) => {
                                         {/* Distribution breakdown */}
                                         {analysisResult.type_distribution && (
                                             <div className="mt-2 space-y-1">
-                                                <div className="flex gap-1 h-2 rounded-full overflow-hidden bg-black/30">
+                                                <div className="flex gap-1 h-3 rounded-full overflow-hidden bg-black/30">
                                                     {Object.entries(analysisResult.type_distribution).map(([name, pct]) => {
                                                         const colors = { Earthquake: 'bg-amber-500', Fire: 'bg-red-500', Flood: 'bg-blue-500', 'No Disaster': 'bg-green-500' };
                                                         return pct > 0 ? <div key={name} className={`${colors[name] || 'bg-gray-400'}`} style={{ width: `${pct}%` }} title={`${name}: ${pct}%`} /> : null;
                                                     })}
                                                 </div>
-                                                <div className="flex gap-3 text-[10px] opacity-80">
+                                                <div className="flex gap-3 text-xs opacity-90">
                                                     {Object.entries(analysisResult.type_distribution).map(([name, pct]) => (
                                                         pct > 0 ? <span key={name}>{name}: {pct}%</span> : null
                                                     ))}

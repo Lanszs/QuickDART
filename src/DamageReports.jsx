@@ -415,13 +415,13 @@ const DamageReports = ({ initialHighlightId }) => {
                                     )}
                                     {selectedReport.analysis_metadata?.type_distribution && (
                                         <div className="mt-2 space-y-1">
-                                            <div className="flex gap-0.5 h-2 rounded-full overflow-hidden bg-gray-200">
+                                            <div className="flex gap-0.5 h-3 rounded-full overflow-hidden bg-gray-200">
                                                 {Object.entries(selectedReport.analysis_metadata.type_distribution).map(([name, pct]) => {
                                                     const colors = { Earthquake: 'bg-amber-500', Fire: 'bg-red-500', Flood: 'bg-blue-500', 'No Disaster': 'bg-green-500' };
                                                     return pct > 0 ? <div key={name} className={`${colors[name] || 'bg-gray-400'}`} style={{ width: `${pct}%` }} title={`${name}: ${pct}%`} /> : null;
                                                 })}
                                             </div>
-                                            <div className="flex gap-2 flex-wrap text-[10px] text-gray-500">
+                                            <div className="flex gap-2 flex-wrap text-xs text-gray-600">
                                                 {Object.entries(selectedReport.analysis_metadata.type_distribution).map(([name, pct]) => (
                                                     pct > 0 ? <span key={name}>{name}: {pct}%</span> : null
                                                 ))}
@@ -442,13 +442,13 @@ const DamageReports = ({ initialHighlightId }) => {
                                     </select>
                                     {selectedReport.analysis_metadata?.damage_distribution && (
                                         <div className="mt-2 space-y-1">
-                                            <div className="flex gap-0.5 h-2 rounded-full overflow-hidden bg-gray-200">
+                                            <div className="flex gap-0.5 h-3 rounded-full overflow-hidden bg-gray-200">
                                                 {Object.entries(selectedReport.analysis_metadata.damage_distribution).map(([name, pct]) => {
                                                     const colors = { Destroyed: 'bg-red-700', Major: 'bg-orange-500', Minor: 'bg-yellow-500', 'No Damage': 'bg-green-500' };
                                                     return pct > 0 ? <div key={name} className={`${colors[name] || 'bg-gray-400'}`} style={{ width: `${pct}%` }} title={`${name}: ${pct}%`} /> : null;
                                                 })}
                                             </div>
-                                            <div className="flex gap-2 flex-wrap text-[10px] text-gray-500">
+                                            <div className="flex gap-2 flex-wrap text-xs text-gray-600">
                                                 {Object.entries(selectedReport.analysis_metadata.damage_distribution).map(([name, pct]) => (
                                                     pct > 0 ? <span key={name}>{name}: {pct}%</span> : null
                                                 ))}
