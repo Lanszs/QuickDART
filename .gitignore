@@ -33,10 +33,20 @@ dataset_damage_earthquake/
 dataset_damage_fire/
 dataset_damage_flood/
 dataset_disaster_type/
+dataset_disaster_type_aerial/
+dataset_damage_fire_aerial/
+dataset_damage_flood_aerial/
+dataset_damage_earthquake_aerial/
 sorted_frames/
 extracted_frames/
 backend/dataset_combined.zip
 backend/xview2_combined.tgz
+
+# raw AIDER dataset download
+raw_data/
+
+# training logs
+ml_engine/*.log
 
 # React build output
 build/

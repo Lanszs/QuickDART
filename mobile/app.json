@@ -1,0 +1,65 @@
+{
+  "expo": {
+    "name": "QuickDART",
+    "slug": "quickdart-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "QuickDART needs camera access to capture disaster reports.",
+        "NSPhotoLibraryUsageDescription": "QuickDART needs photo library access to attach images and videos to reports.",
+        "NSMicrophoneUsageDescription": "QuickDART needs microphone access when recording video reports.",
+        "NSLocationWhenInUseUsageDescription": "QuickDART uses your location to tag disaster reports."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "package": "com.quickdart.mobile",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.INTERNET"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "QuickDART needs photo library access to attach images and videos to reports.",
+          "cameraPermission": "QuickDART needs camera access to capture disaster reports.",
+          "microphonePermission": "QuickDART needs microphone access when recording video reports."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "QuickDART uses your location to tag disaster reports."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "14584f1a-aa14-4ea0-8516-39a699169ace"
+      }
+    }
+  }
+}
