@@ -106,13 +106,6 @@ const Login = ({ onLoginSuccess }) => {
       if (error) throw error;
 
       // 2. DETERMINE ROLE
-     const response = await fetch('http://127.0.0.1:5000/api/v1/login', {
-         method: 'POST',
-         headers: { 'Content-Type': 'application/json' },
-         body: JSON.stringify({ user_id: email, password: "managed_by_supabase" }) 
-         // Note: We bypass password check in backend if supabase succeeds, or implement proper check
-      });
-
       const localAuthResponse = await fetch('http://127.0.0.1:5000/api/v1/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -200,17 +193,20 @@ const App = () => {
   const [session, setSession] = useState(null); 
 
   useEffect(() => {
+    // Always clear any persisted Supabase session on app start so the user
+    // must authenticate fresh every time (prevents auto-login from a previous session).
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
+      if (session) {
+        supabase.auth.signOut();
+      }
       setIsLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
       if (!session) {
         setIsLoggedIn(false);
         setRole(null);
-        localStorage.removeItem('user_team_id'); // Cleanup
+        localStorage.removeItem('user_team_id');
       }
     });
 
