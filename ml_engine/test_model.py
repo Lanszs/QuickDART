@@ -192,6 +192,8 @@ if __name__ == "__main__":
         "ml_engine/test_image.jpg",
         "ml_engine/test_imagefire.jpg",
         "ml_engine/test_imageflood.jpg",
+        r"E:\test_imagepool.jpg",
+        r"E:\test_imagesunset.jpg",
     ]
 
     for img_path in test_images:

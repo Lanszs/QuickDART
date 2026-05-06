@@ -3,9 +3,14 @@ import torch.nn as nn
 import torch.optim as optim
 from torchvision import datasets, models, transforms
 from torch.utils.data import DataLoader, WeightedRandomSampler
+from PIL import ImageFile
 import os
 import time
 import numpy as np
+
+# Some training images may be truncated/partially-downloaded.
+# Allow PIL to load them rather than crash mid-epoch.
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 def train_disaster_model(data_dir, save_path, num_classes=3, satellite_mode=False):
