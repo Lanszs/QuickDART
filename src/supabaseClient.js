@@ -1,7 +1,14 @@
 import { createClient } from '@supabase/supabase-js';
 
-// REPLACE THESE WITH YOUR ACTUAL SUPABASE KEYS
-const supabaseUrl = 'https://udmnaaqvdlckyhexuyqv.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVkbW5hYXF2ZGxja3loZXh1eXF2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQxNjk0MDksImV4cCI6MjA3OTc0NTQwOX0.UCgh3_uG-iFvSjoBwaMkppxffLUl1kmG14m7EBFK4Ag';
+// Read from CRA env at build time. Set these in Vercel's Project → Environment Variables
+// for production, and in a local .env at the repo root for local dev.
+const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
+const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error(
+    'Supabase env vars missing. Set REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_ANON_KEY in your environment (.env at repo root for local dev, Vercel project settings for prod).'
+  );
+}
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
