@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: quickdart-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    plan: standard          # 2GB RAM — required for PyTorch + 8 ResNet50 models
+    region: singapore       # closest Render region to Philippines (lower latency)
+    healthCheckPath: /api/v1/status
+    envVars:
+      # Secrets — fill in via Render dashboard
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: FRONTEND_ORIGIN
+        sync: false        # set this to your Vercel URL after first frontend deploy
+      # Non-secret config
+      - key: SUPABASE_STORAGE_BUCKET
+        value: quickdart-uploads
+      - key: FLASK_DEBUG
+        value: "false"
+      - key: PYTHONUNBUFFERED
+        value: "1"

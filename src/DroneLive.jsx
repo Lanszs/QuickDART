@@ -4,8 +4,9 @@ import { io } from 'socket.io-client';
 import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
 import { toast } from 'react-toastify';
 import { generateAIDescription } from './lib/generateAIDescription';
+import { API_URL } from './config';
 
-const socket = io('http://127.0.0.1:5000');
+const socket = io(API_URL);
 
 function LocationMarker({ position, setPosition }) {
     useMapEvents({
@@ -162,7 +163,7 @@ const DroneLive = ({ myTeam, currentTeamId, onReportSaved }) => {
             const fd = new FormData();
             fd.append('file', blob, `drone-live-${Date.now()}.jpg`);
             fd.append('view', 'aerial');
-            const ar = await fetch('http://127.0.0.1:5000/api/v1/analyze', { method: 'POST', body: fd });
+            const ar = await fetch(`${API_URL}/api/v1/analyze`, { method: 'POST', body: fd });
             if (!ar.ok) throw new Error('Analyze failed');
             const analysis = await ar.json();
 
@@ -180,7 +181,7 @@ const DroneLive = ({ myTeam, currentTeamId, onReportSaved }) => {
                 claimed_by_team_id: currentTeamId,
                 analysis_metadata: analysis,
             };
-            const rr = await fetch('http://127.0.0.1:5000/api/v1/reports', {
+            const rr = await fetch(`${API_URL}/api/v1/reports`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),

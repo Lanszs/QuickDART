@@ -1,8 +1,10 @@
 import cv2
 import sys
 import os
-import uuid 
+import uuid
 import math
+import mimetypes
+import tempfile
 # --- 🔧 FIX: FORCE PYTHON TO FIND THE 'MODELS' FOLDER ---
 # This tells Python: "The current folder (backend) is part of the path!"
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -36,22 +38,68 @@ ML_ENGINE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__f
 sys.path.append(ML_ENGINE_DIR)
 from gradcam import GradCAM, compute_gradcam_for_frame
 
-# --- SUPABASE CONFIGURATION (SCALABILITY UPGRADE) ---
-# Replace these with your actual Supabase URL and SERVICE ROLE KEY (not the anon key!)
-SUPABASE_URL = "https://udmnaaqvdlckyhexuyqv.supabase.co" 
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVkbW5hYXF2ZGxja3loZXh1eXF2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NDE2OTQwOSwiZXhwIjoyMDc5NzQ1NDA5fQ.cx3ob8w0HliIzmq1roV_zaYdOw-BbTz3VPmC6mfwy5Q"
-# Initialize Supabase Client
-try:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-except Exception as e:
-    print(f"⚠️ Warning: Supabase not configured. User creation will be local only. {e}")
+# --- SUPABASE CONFIGURATION ---
+# Loaded from backend/.env locally; set as service env vars in production (Render).
+# database.py already calls load_dotenv on import, so os.environ is populated by now.
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")  # SERVICE ROLE key, not anon
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("⚠️ Warning: SUPABASE_URL/SUPABASE_KEY not set. User creation will be local only.")
     supabase = None
+else:
+    try:
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception as e:
+        print(f"⚠️ Warning: Supabase client init failed. User creation will be local only. {e}")
+        supabase = None
+
+# Storage bucket for uploaded reports (images / videos)
+SUPABASE_STORAGE_BUCKET = os.environ.get("SUPABASE_STORAGE_BUCKET", "quickdart-uploads")
+
+def ensure_storage_bucket():
+    """Create the public uploads bucket if it doesn't already exist. Idempotent."""
+    if not supabase:
+        return
+    try:
+        buckets = supabase.storage.list_buckets()
+        names = []
+        for b in buckets:
+            n = getattr(b, "name", None) or (b.get("name") if isinstance(b, dict) else None)
+            if n: names.append(n)
+        if SUPABASE_STORAGE_BUCKET in names:
+            print(f"--- Storage bucket OK: {SUPABASE_STORAGE_BUCKET}")
+        else:
+            supabase.storage.create_bucket(SUPABASE_STORAGE_BUCKET, options={"public": True})
+            print(f"--- Created Storage bucket: {SUPABASE_STORAGE_BUCKET} (public)")
+    except Exception as e:
+        print(f"--- WARNING: could not verify/create Storage bucket '{SUPABASE_STORAGE_BUCKET}': {e}")
+
+ensure_storage_bucket()
+
+
+def upload_to_storage(file_bytes: bytes, filename: str, content_type: str) -> str:
+    """Upload bytes to Supabase Storage and return the public URL."""
+    if not supabase:
+        raise RuntimeError("Supabase Storage not configured")
+    storage_path = f"uploads/{filename}"
+    supabase.storage.from_(SUPABASE_STORAGE_BUCKET).upload(
+        path=storage_path,
+        file=file_bytes,
+        file_options={"content-type": content_type, "upsert": "true"},
+    )
+    return supabase.storage.from_(SUPABASE_STORAGE_BUCKET).get_public_url(storage_path)
+
 
 # Set up Static Folder for Images
-app = Flask(__name__, static_folder='static') 
-CORS(app, resources={r"/*": {"origins": "*"}}) # Allow all origins to fix image loading issues
+app = Flask(__name__, static_folder='static')
 
-socketio = SocketIO(app, cors_allowed_origins="*")
+# CORS: allow comma-separated origins via FRONTEND_ORIGIN env var. Default '*' for dev.
+# In production set this to your Vercel URL, e.g. "https://quickdart.vercel.app".
+_frontend_origin_raw = os.environ.get("FRONTEND_ORIGIN", "*")
+_cors_origins = [o.strip() for o in _frontend_origin_raw.split(",") if o.strip()] if _frontend_origin_raw != "*" else "*"
+CORS(app, resources={r"/*": {"origins": _cors_origins}})
+socketio = SocketIO(app, cors_allowed_origins=_cors_origins)
 
 TYPE_CLASS_NAMES = ['Earthquake', 'Fire', 'Flood', 'No Disaster']
 DAMAGE_CLASS_NAMES = ['Destroyed', 'Major', 'Minor', 'No Damage']
@@ -950,21 +998,22 @@ def analyze_image():
         return jsonify({"error": "No selected file"}), 400
 
     try:
-        # 1. Save the uploaded file to disk
-        filename = f"{uuid.uuid4().hex}_{file.filename}"
-        upload_folder = os.path.join(app.root_path, 'static', 'uploads')
-        if not os.path.exists(upload_folder):
-            os.makedirs(upload_folder)
-        filepath = os.path.join(upload_folder, filename)
-        file.save(filepath)
-        print(f"DEBUG: filename={filename}, ext={os.path.splitext(filename)[1].lower()}, is_video={os.path.splitext(filename)[1].lower() in {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv'}}")
+        # 1. Read uploaded bytes into memory and detect type
+        original_name = file.filename
+        file_ext = os.path.splitext(original_name)[1].lower()
+        filename = f"{uuid.uuid4().hex}{file_ext}"
+        file_bytes = file.read()
 
-        # 2. Detect if it's a video or an image
         video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv'}
-        file_ext = os.path.splitext(filename)[1].lower()
         is_video = file_ext in video_extensions
+        content_type = (
+            file.mimetype
+            or mimetypes.guess_type(original_name)[0]
+            or ('video/mp4' if is_video else 'application/octet-stream')
+        )
+        print(f"DEBUG: filename={filename}, ext={file_ext}, is_video={is_video}, content_type={content_type}, size={len(file_bytes)}")
 
-        # Pick model bundle based on requested view (ground = phone, aerial = drone)
+        # 2. Pick model bundle based on requested view (ground = phone, aerial = drone)
         view = (request.form.get('view') or 'ground').lower()
         type_model, damage_models, type_gradcam, damage_gradcams = get_models_for_view(view)
 
@@ -973,25 +1022,41 @@ def analyze_image():
         if not any(damage_models.values()):
             return jsonify({"error": "No damage models loaded"}), 500
 
-        image_url = f"http://127.0.0.1:5000/static/uploads/{filename}"
+        # 3. Push the original media to Supabase Storage and use its public URL.
+        #    The local 'static/uploads/' directory is no longer used in production.
+        try:
+            image_url = upload_to_storage(file_bytes, filename, content_type)
+        except Exception as e:
+            print(f"Storage upload failed: {e}")
+            return jsonify({"error": f"Storage upload failed: {e}"}), 500
 
         if is_video:
             # --- VIDEO PATH ---
-            socketio.emit('analysis_progress', {
-                'stage': 'extracting',
-                'message': 'Extracting frames from video...'
-            })
+            # cv2 needs a real file path, so stage the bytes in a temp file just for extraction.
+            tmp = tempfile.NamedTemporaryFile(suffix=file_ext, delete=False)
+            try:
+                tmp.write(file_bytes)
+                tmp.close()
+                tmp_path = tmp.name
 
-            frames = extract_frames(filepath, num_frames=10)
-            if not frames:
-                return jsonify({"error": "Could not extract frames from video"}), 400
+                socketio.emit('analysis_progress', {
+                    'stage': 'extracting',
+                    'message': 'Extracting frames from video...'
+                })
 
-            # Get video metadata for timeline sync
-            cap = cv2.VideoCapture(filepath)
-            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-            total_frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            video_duration = total_frame_count / fps if fps > 0 else 0
-            cap.release()
+                frames = extract_frames(tmp_path, num_frames=10)
+                if not frames:
+                    return jsonify({"error": "Could not extract frames from video"}), 400
+
+                # Get video metadata for timeline sync
+                cap = cv2.VideoCapture(tmp_path)
+                fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+                total_frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                video_duration = total_frame_count / fps if fps > 0 else 0
+                cap.release()
+            finally:
+                try: os.unlink(tmp.name)
+                except OSError: pass
 
             result = predict_from_frames(frames, sid=True, view=view)
 
@@ -1018,10 +1083,8 @@ def analyze_image():
 
         else:
             # --- IMAGE PATH ---
-            with open(filepath, 'rb') as f:
-                image_bytes = f.read()
-
-            image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+            # We already have the bytes in memory from the request; no disk roundtrip needed.
+            image = Image.open(io.BytesIO(file_bytes)).convert('RGB')
             tensor = transform(image).unsqueeze(0)
 
             with torch.no_grad():
@@ -1726,6 +1789,7 @@ def delete_asset(asset_id):
         
 
 if __name__ == '__main__':
-    print("INFO:root:Starting Flask API server on port 5000...")
-    # Running it on 0.0.0.0 for accessibility
-    socketio.run(app, debug=True, use_reloader=False, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
+    port = int(os.environ.get("PORT", 5000))
+    debug = os.environ.get("FLASK_DEBUG", "true").lower() == "true"
+    print(f"INFO:root:Starting Flask API server on port {port} (debug={debug})...")
+    socketio.run(app, debug=debug, use_reloader=False, host='0.0.0.0', port=port, allow_unsafe_werkzeug=True)

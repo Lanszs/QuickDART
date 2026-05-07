@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Settings as SettingsIcon, Map, FileText, Bell, User, Save, RotateCcw, Monitor } from 'lucide-react';
 import { toast } from 'react-toastify';
+import { API_URL } from './config';
 
 const DEFAULTS = {
     mapCenterLat: '14.7546',
@@ -68,7 +69,7 @@ const Settings = () => {
                 {/* System */}
                 <SettingsSection title="System" icon={<Monitor size={18} />}>
                     <SettingsRow label="Server URL" description="Backend API endpoint (read-only)">
-                        <input type="text" value="http://127.0.0.1:5000" disabled className="w-64 p-2 border border-gray-200 rounded-lg text-sm bg-gray-100 text-gray-500" />
+                        <input type="text" value={API_URL} disabled className="w-64 p-2 border border-gray-200 rounded-lg text-sm bg-gray-100 text-gray-500" />
                     </SettingsRow>
                     <SettingsRow label="Auto-Refresh Interval" description="How often resource data refreshes (seconds)">
                         <div className="flex items-center gap-3">

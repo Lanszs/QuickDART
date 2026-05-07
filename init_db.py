@@ -2,14 +2,15 @@ import sys
 import os
 
 sys.path.append(os.getcwd())
+# Importing database first triggers load_dotenv() so env vars are populated.
 from backend.models.database import Base, engine, SessionLocal
 from backend.models.user import User
-from backend.models.report import Report    
+from backend.models.report import Report
 from backend.models.resources import Asset, Team, Message
 from supabase import create_client, Client
 
-SUPABASE_URL = "https://udmnaaqvdlckyhexuyqv.supabase.co" 
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVkbW5hYXF2ZGxja3loZXh1eXF2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NDE2OTQwOSwiZXhwIjoyMDc5NzQ1NDA5fQ.cx3ob8w0HliIzmq1roV_zaYdOw-BbTz3VPmC6mfwy5Q"
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 
 ADMIN_EMAIL = "sysadmin@quickdart.com"
 
@@ -17,8 +18,8 @@ def wipe_supabase_users():
     """Deletes all users EXCEPT the Admin"""
     print("\n🔥 CLEANING UP SUPABASE CLOUD...")
     
-    if "YOUR_" in SUPABASE_URL:
-        print("⚠️  Skipping Supabase wipe (Keys not set)")
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print("⚠️  Skipping Supabase wipe (SUPABASE_URL/SUPABASE_KEY not set)")
         return
 
     try:

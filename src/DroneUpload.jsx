@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { generateAIDescription } from './lib/generateAIDescription';
+import { API_URL } from './config';
 
 // Default marker icon fix for Leaflet in Webpack
 const droneMarkerIcon = new L.Icon({
@@ -89,7 +90,7 @@ const DroneUpload = ({ myTeam, currentTeamId, onReportSaved }) => {
 
             setItems(prev => prev.map(i => i.id === id ? { ...i, status: 'analyzing' } : i));
 
-            const response = await fetch('http://127.0.0.1:5000/api/v1/analyze', {
+            const response = await fetch(`${API_URL}/api/v1/analyze`, {
                 method: 'POST',
                 body: formData,
             });
@@ -129,7 +130,7 @@ const DroneUpload = ({ myTeam, currentTeamId, onReportSaved }) => {
         };
 
         try {
-            const response = await fetch('http://127.0.0.1:5000/api/v1/reports', {
+            const response = await fetch(`${API_URL}/api/v1/reports`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),

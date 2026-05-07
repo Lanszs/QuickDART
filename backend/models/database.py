@@ -1,16 +1,22 @@
 import os
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
+# Load .env from backend/ (one level up from this file)
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(_BACKEND_DIR, ".env"))
+
 # --- 1. Database Configuration ---
-
-DEFAULT_DB_URL = "postgresql://postgres.udmnaaqvdlckyhexuyqv:31231231232dsada@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres"
-
-
-DATABASE_URL = os.environ.get("DATABASE_URL", DEFAULT_DB_URL)
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL is not set. Configure it via backend/.env (local) "
+        "or service environment variables (production)."
+    )
 
 # Fix for some postgres URL prefixes
-if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 # --- 2. Engine ---

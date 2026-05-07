@@ -4,6 +4,7 @@ import ResponderDashboard from './ResponderDashboard';
 import GuestDashboard from './GuestDashboard';
 import { Shield, User, Map as MapIcon, ArrowRight } from 'lucide-react';
 import { supabase } from './supabaseClient';
+import { API_URL } from './config';
 
 // --- UI COMPONENTS ---
 
@@ -106,7 +107,7 @@ const Login = ({ onLoginSuccess }) => {
       if (error) throw error;
 
       // 2. DETERMINE ROLE
-      const localAuthResponse = await fetch('http://127.0.0.1:5000/api/v1/login', {
+      const localAuthResponse = await fetch(`${API_URL}/api/v1/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ user_id: email, password: "managed_by_supabase" })

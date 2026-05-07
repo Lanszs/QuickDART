@@ -1,0 +1,36 @@
+# Local virtualenvs (Windows-built, won't work in Linux containers anyway)
+backend/venv
+backend/.venv
+.venv
+venv
+
+# Python caches
+**/__pycache__
+**/*.pyc
+**/*.pyo
+
+# Local upload staging (no longer used at runtime; just bloat)
+backend/static/uploads/
+
+# Local secrets — Render injects env vars instead
+backend/.env
+
+# Heavy directories not needed for the backend container
+node_modules
+build
+public
+src
+mobile
+dataset_*
+sorted_frames
+extracted_frames
+raw_data
+*.sqlite
+*.db
+
+# Editor / git
+.git
+.gitignore
+.claude
+.vscode
+.idea
