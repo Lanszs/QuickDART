@@ -95,7 +95,7 @@ const DroneLive = ({ myTeam, currentTeamId, onReportSaved }) => {
                 canvas.height = v.videoHeight;
                 canvas.getContext('2d').drawImage(v, 0, 0);
                 const data = canvas.toDataURL('image/jpeg', 0.5);
-                socket.emit('analyze_live_frame', { frame: data });
+                socket.emit('analyze_live_frame', { frame: data, view: 'aerial' });
             }, 500);
         }, 400);
         return () => {
@@ -161,6 +161,7 @@ const DroneLive = ({ myTeam, currentTeamId, onReportSaved }) => {
             const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.85));
             const fd = new FormData();
             fd.append('file', blob, `drone-live-${Date.now()}.jpg`);
+            fd.append('view', 'aerial');
             const ar = await fetch('http://127.0.0.1:5000/api/v1/analyze', { method: 'POST', body: fd });
             if (!ar.ok) throw new Error('Analyze failed');
             const analysis = await ar.json();

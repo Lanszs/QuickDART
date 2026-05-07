@@ -55,16 +55,14 @@ const INTRAMUROS_BOUNDS = [
 
 const INTRAMUROS_CENTER = [14.5895, 120.9742]; // Approximate center near Manila Cathedral
 
-/* const MARILAO_BOUNDS = [
+// Bounds of Marilao, Bulacan
+const MARILAO_BOUNDS = [
     [14.7200, 120.9000], // South-West corner
     [14.8200, 121.0500]  // North-East corner
-]; */
+];
 
 // Coordinates for Marilao, Bulacan
-// const MARILAO_CENTER = [14.7546, 120.9466];
-
-// --- UPDATED CENTER: DAMPALIT, MALABON ---
-const MAP_CENTER = [14.6944, 120.9324];
+const MARILAO_CENTER = [14.7546, 120.9466];
 
 // Mock Incident Data
 const incidents = [
@@ -80,15 +78,17 @@ const IncidentMap = ({ reports = [], teams = [] }) => {
     const settingsZoom = parseInt(localStorage.getItem('quickdart_mapZoom'));
     const showCoverage = localStorage.getItem('quickdart_showCoverageRadius') !== 'false';
 
-    const mapCenter = (settingsLat && settingsLng) ? [settingsLat, settingsLng] : INTRAMUROS_CENTER;
+    const mapCenter = (settingsLat && settingsLng) ? [settingsLat, settingsLng] : MARILAO_CENTER;
     const mapZoom = settingsZoom || 14;
 
     return (
         <MapContainer
             center={mapCenter}
             zoom={mapZoom}
-            minZoom={10}
+            minZoom={13}
             maxZoom={18}
+            maxBounds={MARILAO_BOUNDS}
+            maxBoundsViscosity={1.0}
             scrollWheelZoom={true}
             style={{ height: "100%", width: "100%", borderRadius: "0.5rem", zIndex: 0 }}
         >

@@ -76,10 +76,22 @@ def load_model(path, num_classes):
 
 # Robust path finding (Works whether you run from root or backend folder)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TYPE_MODEL_PATH = os.path.join(BASE_DIR, 'ml_engine', 'disaster_type_model.pth')
-DAMAGE_EQ_MODEL_PATH = os.path.join(BASE_DIR, 'ml_engine', 'damage_earthquake_model.pth')
-DAMAGE_FIRE_MODEL_PATH = os.path.join(BASE_DIR, 'ml_engine', 'damage_fire_model.pth')
-DAMAGE_FLOOD_MODEL_PATH = os.path.join(BASE_DIR, 'ml_engine', 'damage_flood_model.pth')
+ML_DIR = os.path.join(BASE_DIR, 'ml_engine')
+
+MODEL_PATHS = {
+    'ground': {
+        'type': os.path.join(ML_DIR, 'disaster_type_model.pth'),
+        'Earthquake': os.path.join(ML_DIR, 'damage_earthquake_model.pth'),
+        'Fire': os.path.join(ML_DIR, 'damage_fire_model.pth'),
+        'Flood': os.path.join(ML_DIR, 'damage_flood_model.pth'),
+    },
+    'aerial': {
+        'type': os.path.join(ML_DIR, 'disaster_type_aerial_model.pth'),
+        'Earthquake': os.path.join(ML_DIR, 'damage_earthquake_aerial_model.pth'),
+        'Fire': os.path.join(ML_DIR, 'damage_fire_aerial_model.pth'),
+        'Flood': os.path.join(ML_DIR, 'damage_flood_aerial_model.pth'),
+    },
+}
 
 # --- AUTO-MIGRATION: Add missing columns to reports table ---
 def run_migrations():
@@ -169,29 +181,59 @@ def run_migrations():
 run_migrations()
 
 print("--- Loading AI Models ---")
-type_model = load_model(TYPE_MODEL_PATH, len(TYPE_CLASS_NAMES))
-damage_eq_model = load_model(DAMAGE_EQ_MODEL_PATH, len(DAMAGE_CLASS_NAMES))
-damage_fire_model = load_model(DAMAGE_FIRE_MODEL_PATH, len(DAMAGE_CLASS_NAMES))
-damage_flood_model = load_model(DAMAGE_FLOOD_MODEL_PATH, len(DAMAGE_CLASS_NAMES))
 
-# Map disaster types to their damage models
-damage_models = {
-    'Earthquake': damage_eq_model,
-    'Fire': damage_fire_model,
-    'Flood': damage_flood_model,
-}
+# Loaded model bundles, keyed by view: { 'ground': {...}, 'aerial': {...} }
+# Each inner dict has keys: 'type' + each TYPE_CLASS_NAMES disaster name
+type_models = {}
+damage_models = {}
+type_gradcams = {}
+damage_gradcams = {}
 
-# Initialize Grad-CAM for type model and each damage model
-type_gradcam = GradCAM(type_model, "layer4") if type_model else None
-damage_eq_gradcam = GradCAM(damage_eq_model, "layer4") if damage_eq_model else None
-damage_fire_gradcam = GradCAM(damage_fire_model, "layer4") if damage_fire_model else None
-damage_flood_gradcam = GradCAM(damage_flood_model, "layer4") if damage_flood_model else None
+for view, paths in MODEL_PATHS.items():
+    print(f"--- View: {view} ---")
 
-damage_gradcams = {
-    'Earthquake': damage_eq_gradcam,
-    'Fire': damage_fire_gradcam,
-    'Flood': damage_flood_gradcam,
-}
+    type_loaded = load_model(paths['type'], len(TYPE_CLASS_NAMES))
+    if type_loaded is None and view != 'ground' and type_models.get('ground') is not None:
+        print(f"  -> falling back to ground type model for view='{view}'")
+        type_loaded = type_models['ground']
+    type_models[view] = type_loaded
+
+    damage_models[view] = {}
+    for disaster in ('Earthquake', 'Fire', 'Flood'):
+        m = load_model(paths[disaster], len(DAMAGE_CLASS_NAMES))
+        if m is None and view != 'ground':
+            ground_m = damage_models.get('ground', {}).get(disaster)
+            if ground_m is not None:
+                print(f"  -> falling back to ground {disaster} damage model for view='{view}'")
+                m = ground_m
+        damage_models[view][disaster] = m
+
+    type_gradcams[view] = GradCAM(type_models[view], "layer4") if type_models[view] else None
+    damage_gradcams[view] = {
+        disaster: (GradCAM(model, "layer4") if model else None)
+        for disaster, model in damage_models[view].items()
+    }
+
+# Backwards-compat aliases — some legacy refs may still use these (default to ground view)
+type_model = type_models.get('ground')
+type_gradcam = type_gradcams.get('ground')
+
+
+def get_models_for_view(view: str = 'ground'):
+    """
+    Returns (type_model, damage_models_dict, type_gradcam, damage_gradcams_dict)
+    for the requested view. Falls back to 'ground' if the view's models are missing
+    so a missing aerial bundle degrades gracefully instead of crashing.
+    """
+    if view not in type_models or type_models.get(view) is None:
+        view = 'ground'
+    return (
+        type_models[view],
+        damage_models[view],
+        type_gradcams[view],
+        damage_gradcams[view],
+    )
+
 print("--- Grad-CAM initialized ---")
 
 # Image Preprocessing
@@ -680,12 +722,15 @@ def notify_asset(asset_id):
         session.close()
 
 
-def predict_from_frames(frames, sid=None):
+def predict_from_frames(frames, sid=None, view='ground'):
     """
     Given a list of PIL Images (frames), runs both models on each frame.
+    `view` selects the model bundle: 'ground' (default) or 'aerial'.
     Returns a dict with majority-voted results, full distributions, and per-frame predictions.
     Optionally emits progress via Socket.IO if sid is provided.
     """
+    type_model, damage_models, type_gradcam, damage_gradcams = get_models_for_view(view)
+
     type_votes = []
     damage_votes = []
     type_confidences = []
@@ -919,6 +964,10 @@ def analyze_image():
         file_ext = os.path.splitext(filename)[1].lower()
         is_video = file_ext in video_extensions
 
+        # Pick model bundle based on requested view (ground = phone, aerial = drone)
+        view = (request.form.get('view') or 'ground').lower()
+        type_model, damage_models, type_gradcam, damage_gradcams = get_models_for_view(view)
+
         if not type_model:
             return jsonify({"error": "Type model not loaded"}), 500
         if not any(damage_models.values()):
@@ -944,7 +993,7 @@ def analyze_image():
             video_duration = total_frame_count / fps if fps > 0 else 0
             cap.release()
 
-            result = predict_from_frames(frames, sid=True)
+            result = predict_from_frames(frames, sid=True, view=view)
 
             socketio.emit('analysis_progress', {
                 'stage': 'complete',
@@ -1281,6 +1330,7 @@ def handle_live_frame(data):
     """
     Receives a base64-encoded JPEG frame from the browser.
     Runs both models + Grad-CAM and emits bounding box results back.
+    `data['view']` selects the model bundle: 'aerial' (default for live drone) or 'ground'.
     """
     from flask import request as flask_request
     sid = flask_request.sid
@@ -1290,6 +1340,10 @@ def handle_live_frame(data):
     if sid in _last_live_analysis and (now - _last_live_analysis[sid]) < 0.5:
         return
     _last_live_analysis[sid] = now
+
+    # Live feed defaults to aerial (drone perspective) but client can override
+    view = (data.get('view') or 'aerial').lower()
+    type_model, damage_models, type_gradcam, damage_gradcams = get_models_for_view(view)
 
     if not type_model:
         emit('live_frame_result', {'error': 'Type model not loaded'})

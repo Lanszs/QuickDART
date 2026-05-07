@@ -85,6 +85,7 @@ const DroneUpload = ({ myTeam, currentTeamId, onReportSaved }) => {
         try {
             const formData = new FormData();
             formData.append('file', item.file);
+            formData.append('view', 'aerial');
 
             setItems(prev => prev.map(i => i.id === id ? { ...i, status: 'analyzing' } : i));
 
