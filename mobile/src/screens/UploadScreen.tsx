@@ -43,14 +43,14 @@ export default function UploadScreen({ navigation }: Props) {
         }
     };
 
-    const pickFromGallery = async () => {
+    const pickFromGallery = async (mediaTypes: ImagePicker.MediaType[]) => {
         const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!perm.granted) {
             Alert.alert('Permission needed', 'Photo library access is required to attach media.');
             return;
         }
         const res = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images', 'videos'],
+            mediaTypes,
             quality: 0.9,
             videoMaxDuration: 30,
         });
@@ -59,14 +59,14 @@ export default function UploadScreen({ navigation }: Props) {
         }
     };
 
-    const openCamera = async () => {
+    const openCamera = async (mediaTypes: ImagePicker.MediaType[]) => {
         const perm = await ImagePicker.requestCameraPermissionsAsync();
         if (!perm.granted) {
             Alert.alert('Permission needed', 'Camera access is required to capture media.');
             return;
         }
         const res = await ImagePicker.launchCameraAsync({
-            mediaTypes: ['images', 'videos'],
+            mediaTypes,
             quality: 0.9,
             videoMaxDuration: 30,
         });
@@ -99,9 +99,15 @@ export default function UploadScreen({ navigation }: Props) {
                     </View>
                 ) : (
                     <>
-                        <Pressable style={styles.primaryBtn} onPress={openCamera}>
-                            <Text style={styles.primaryBtnText}>Open Camera</Text>
-                        </Pressable>
+                        <Text style={styles.sectionLabel}>Use Camera</Text>
+                        <View style={styles.btnRow}>
+                            <Pressable style={[styles.primaryBtn, styles.btnHalf]} onPress={() => openCamera(['images'])}>
+                                <Text style={styles.primaryBtnText}>Take Photo</Text>
+                            </Pressable>
+                            <Pressable style={[styles.primaryBtn, styles.btnHalf]} onPress={() => openCamera(['videos'])}>
+                                <Text style={styles.primaryBtnText}>Record Video</Text>
+                            </Pressable>
+                        </View>
 
                         <View style={styles.dividerRow}>
                             <View style={styles.divider} />
@@ -109,9 +115,15 @@ export default function UploadScreen({ navigation }: Props) {
                             <View style={styles.divider} />
                         </View>
 
-                        <Pressable style={styles.secondaryBtn} onPress={pickFromGallery}>
-                            <Text style={styles.secondaryBtnText}>Choose from Gallery</Text>
-                        </Pressable>
+                        <Text style={styles.sectionLabel}>Choose from Gallery</Text>
+                        <View style={styles.btnRow}>
+                            <Pressable style={[styles.secondaryBtn, styles.btnHalf]} onPress={() => pickFromGallery(['images'])}>
+                                <Text style={styles.secondaryBtnText}>Photo</Text>
+                            </Pressable>
+                            <Pressable style={[styles.secondaryBtn, styles.btnHalf]} onPress={() => pickFromGallery(['videos'])}>
+                                <Text style={styles.secondaryBtnText}>Video</Text>
+                            </Pressable>
+                        </View>
                     </>
                 )}
             </View>
@@ -171,6 +183,16 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     secondaryBtnText: { color: '#ffffff', fontSize: 16, fontWeight: '700' },
+    sectionLabel: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#6b7280',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+        marginBottom: 8,
+    },
+    btnRow: { flexDirection: 'row', gap: 10 },
+    btnHalf: { flex: 1 },
     busyBox: {
         backgroundColor: '#ffffff',
         borderRadius: 16,
