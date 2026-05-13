@@ -26,6 +26,8 @@ WORKDIR /app/backend
 ENV PYTHONUNBUFFERED=1
 ENV FLASK_DEBUG=false
 
-# Render injects $PORT; app.py reads it.
+# Render injects $PORT; bind gunicorn to it. Single eventlet worker because the
+# loaded models hold ~1.5GB and a native cv2 crash takes the worker with it —
+# one worker keeps memory bounded and the failure mode predictable.
 EXPOSE 5000
-CMD ["python", "app.py"]
+CMD ["sh", "-c", "gunicorn --worker-class eventlet -w 1 --timeout 300 -b 0.0.0.0:${PORT:-5000} app:app"]

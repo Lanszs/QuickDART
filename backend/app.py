@@ -964,28 +964,49 @@ def extract_frames(video_path, num_frames=10):
     """
     Extracts up to `num_frames` evenly spaced frames from a video.
     Returns a list of PIL Images.
+
+    Works on non-seekable streams (e.g. fragmented WebM from MediaRecorder) by
+    reading sequentially when the container has no frame index — seeking with
+    CAP_PROP_POS_FRAMES on a fragmented WebM can segfault the FFmpeg demuxer.
     """
     cap = cv2.VideoCapture(video_path)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    
-    if total_frames == 0:
-        cap.release()
+    if not cap.isOpened():
         return []
 
-    # Pick evenly spaced frame indices
-    indices = [int(i * total_frames / num_frames) for i in range(num_frames)]
-    frames = []
+    def _to_pil(bgr):
+        return Image.fromarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
 
-    for idx in indices:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+
+    if total_frames > 0:
+        target_indices = set(int(i * total_frames / num_frames) for i in range(num_frames))
+        frames, i = [], 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            if i in target_indices:
+                frames.append(_to_pil(frame))
+                if len(frames) >= num_frames:
+                    break
+            i += 1
+        cap.release()
+        return frames
+
+    # Fragmented / non-seekable stream: scan once, then evenly subsample.
+    all_frames = []
+    while True:
         ret, frame = cap.read()
-        if ret:
-            # OpenCV uses BGR, PIL uses RGB
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frames.append(Image.fromarray(frame_rgb))
-
+        if not ret:
+            break
+        all_frames.append(frame)
     cap.release()
-    return frames
+
+    if not all_frames:
+        return []
+
+    step = max(1, len(all_frames) // num_frames)
+    return [_to_pil(f) for f in all_frames[::step][:num_frames]]
 
 # --- AI ANALYSIS ROUTE (UPDATED TO SAVE IMAGE) ---
 @app.route('/api/v1/analyze', methods=['POST'])
@@ -1044,14 +1065,22 @@ def analyze_image():
                     'message': 'Extracting frames from video...'
                 })
 
-                frames = extract_frames(tmp_path, num_frames=10)
+                try:
+                    frames = extract_frames(tmp_path, num_frames=10)
+                except Exception as e:
+                    print(f"Frame extraction failed: {e}", flush=True)
+                    return jsonify({"error": f"Could not decode video: {e}"}), 400
+
                 if not frames:
                     return jsonify({"error": "Could not extract frames from video"}), 400
 
                 # Get video metadata for timeline sync
                 cap = cv2.VideoCapture(tmp_path)
                 fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-                total_frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                total_frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                if total_frame_count <= 0:
+                    # Fragmented WebM: FRAME_COUNT is unreliable. Approximate from analyzed sample.
+                    total_frame_count = len(frames)
                 video_duration = total_frame_count / fps if fps > 0 else 0
                 cap.release()
             finally:
