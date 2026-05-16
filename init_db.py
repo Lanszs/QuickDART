@@ -11,8 +11,36 @@ from supabase import create_client, Client
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+SUPABASE_STORAGE_BUCKET = os.environ.get("SUPABASE_STORAGE_BUCKET", "quickdart-uploads")
+SUPABASE_ID_BUCKET = os.environ.get("SUPABASE_ID_BUCKET", "quickdart-id-documents")
 
 ADMIN_EMAIL = "sysadmin@quickdart.com"
+
+
+def ensure_buckets():
+    """Ensure both storage buckets exist with correct visibility."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print("⚠️  Skipping bucket setup (SUPABASE_URL/SUPABASE_KEY not set)")
+        return
+    try:
+        client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        existing = client.storage.list_buckets()
+        names = []
+        for b in existing:
+            n = getattr(b, "name", None) or (b.get("name") if isinstance(b, dict) else None)
+            if n: names.append(n)
+        targets = [
+            (SUPABASE_STORAGE_BUCKET, True),   # public — report media
+            (SUPABASE_ID_BUCKET, False),       # private — ID documents + selfies
+        ]
+        for name, public in targets:
+            if name in names:
+                print(f"   📦 Bucket OK: {name} ({'public' if public else 'private'})")
+            else:
+                client.storage.create_bucket(name, options={"public": public})
+                print(f"   ✅ Created bucket: {name} ({'public' if public else 'private'})")
+    except Exception as e:
+        print(f"   ⚠️  Bucket setup failed: {e}")
 
 def wipe_supabase_users():
     """Deletes all users EXCEPT the Admin"""
@@ -57,6 +85,7 @@ def init_db():
     print("Connecting to database...")
 
     wipe_supabase_users()
+    ensure_buckets()
 
     try:
         print("Resetting tables...")

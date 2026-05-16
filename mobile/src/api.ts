@@ -1,8 +1,14 @@
 import { BACKEND_URL, NOMINATIM_USER_AGENT } from './config';
 import type { AnalysisResult } from './lib/generateAIDescription';
+import { getAccessToken } from './lib/supabase';
 
 // ngrok free domains show a browser warning page unless this header is set.
 const NGROK_HEADER = { 'ngrok-skip-browser-warning': '1' };
+
+async function authHeader(): Promise<Record<string, string>> {
+    const token = await getAccessToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 export type PickedAsset = {
     uri: string;
@@ -67,9 +73,10 @@ export async function analyzeFile(asset: PickedAsset): Promise<AnalysisResult> {
         type,
     } as unknown as Blob);
 
+    const auth = await authHeader();
     const res = await fetch(`${BACKEND_URL}/api/v1/analyze`, {
         method: 'POST',
-        headers: NGROK_HEADER,
+        headers: { ...NGROK_HEADER, ...auth },
         body: form,
     });
 
@@ -87,15 +94,76 @@ export async function analyzeFile(asset: PickedAsset): Promise<AnalysisResult> {
 }
 
 export async function submitReport(payload: ReportPayload): Promise<{ id: number } & Record<string, unknown>> {
+    const auth = await authHeader();
     const res = await fetch(`${BACKEND_URL}/api/v1/reports`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...NGROK_HEADER },
+        headers: { 'Content-Type': 'application/json', ...NGROK_HEADER, ...auth },
         body: JSON.stringify(payload),
     });
     if (!res.ok) {
         throw new Error(`Submit failed (${res.status})`);
     }
     return res.json();
+}
+
+// --- Civilian identity verification ---------------------------------------
+
+export type VerificationStatus = 'unverified' | 'pending' | 'approved' | 'rejected';
+
+export type VerificationState = {
+    status: VerificationStatus;
+    rejection_reason: string | null;
+    submitted_at: string | null;
+    reviewed_at: string | null;
+    full_name: string | null;
+};
+
+export async function civilianSignup(email: string, password: string, fullName: string): Promise<void> {
+    const res = await fetch(`${BACKEND_URL}/api/v1/civilian/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...NGROK_HEADER },
+        body: JSON.stringify({ email, password, full_name: fullName }),
+    });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `signup_failed_${res.status}`);
+    }
+}
+
+export async function fetchVerificationStatus(): Promise<VerificationState | null> {
+    const auth = await authHeader();
+    if (!auth.Authorization) return null;
+    const res = await fetch(`${BACKEND_URL}/api/v1/civilian/verification`, {
+        headers: { ...NGROK_HEADER, ...auth },
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as VerificationState;
+}
+
+export async function submitVerification(idAsset: PickedAsset, selfieAsset: PickedAsset): Promise<VerificationState> {
+    const form = new FormData();
+    form.append('id_document', {
+        uri: idAsset.uri,
+        name: guessFileName(idAsset.uri, idAsset.fileName),
+        type: guessMimeType(idAsset.uri, idAsset.mimeType),
+    } as unknown as Blob);
+    form.append('selfie', {
+        uri: selfieAsset.uri,
+        name: guessFileName(selfieAsset.uri, selfieAsset.fileName),
+        type: guessMimeType(selfieAsset.uri, selfieAsset.mimeType),
+    } as unknown as Blob);
+
+    const auth = await authHeader();
+    const res = await fetch(`${BACKEND_URL}/api/v1/civilian/verification`, {
+        method: 'POST',
+        headers: { ...NGROK_HEADER, ...auth },
+        body: form,
+    });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `verification_upload_failed_${res.status}`);
+    }
+    return (await res.json()) as VerificationState;
 }
 
 export async function reverseGeocode(lat: number, lng: number): Promise<string | null> {

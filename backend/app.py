@@ -54,11 +54,13 @@ else:
         print(f"⚠️ Warning: Supabase client init failed. User creation will be local only. {e}")
         supabase = None
 
-# Storage bucket for uploaded reports (images / videos)
+# Storage bucket for uploaded reports (images / videos) — public.
 SUPABASE_STORAGE_BUCKET = os.environ.get("SUPABASE_STORAGE_BUCKET", "quickdart-uploads")
+# Storage bucket for civilian ID documents + selfies — private.
+SUPABASE_ID_BUCKET = os.environ.get("SUPABASE_ID_BUCKET", "quickdart-id-documents")
 
-def ensure_storage_bucket():
-    """Create the public uploads bucket if it doesn't already exist. Idempotent."""
+def _ensure_bucket(name: str, public: bool):
+    """Create a Supabase Storage bucket if missing. Idempotent."""
     if not supabase:
         return
     try:
@@ -67,28 +69,177 @@ def ensure_storage_bucket():
         for b in buckets:
             n = getattr(b, "name", None) or (b.get("name") if isinstance(b, dict) else None)
             if n: names.append(n)
-        if SUPABASE_STORAGE_BUCKET in names:
-            print(f"--- Storage bucket OK: {SUPABASE_STORAGE_BUCKET}")
+        if name in names:
+            print(f"--- Storage bucket OK: {name} ({'public' if public else 'private'})")
         else:
-            supabase.storage.create_bucket(SUPABASE_STORAGE_BUCKET, options={"public": True})
-            print(f"--- Created Storage bucket: {SUPABASE_STORAGE_BUCKET} (public)")
+            supabase.storage.create_bucket(name, options={"public": public})
+            print(f"--- Created Storage bucket: {name} ({'public' if public else 'private'})")
     except Exception as e:
-        print(f"--- WARNING: could not verify/create Storage bucket '{SUPABASE_STORAGE_BUCKET}': {e}")
+        print(f"--- WARNING: could not verify/create Storage bucket '{name}': {e}")
 
-ensure_storage_bucket()
+_ensure_bucket(SUPABASE_STORAGE_BUCKET, public=True)
+_ensure_bucket(SUPABASE_ID_BUCKET, public=False)
 
 
-def upload_to_storage(file_bytes: bytes, filename: str, content_type: str) -> str:
-    """Upload bytes to Supabase Storage and return the public URL."""
+def upload_to_storage(file_bytes: bytes, filename: str, content_type: str,
+                      bucket: str = None, prefix: str = "uploads") -> str:
+    """Upload bytes to Supabase Storage and return the public URL.
+
+    Defaults to the public reports bucket. Returns a public URL; callers that need
+    a signed URL (private bucket) should use `upload_private` + `get_signed_url`.
+    """
     if not supabase:
         raise RuntimeError("Supabase Storage not configured")
-    storage_path = f"uploads/{filename}"
-    supabase.storage.from_(SUPABASE_STORAGE_BUCKET).upload(
+    bucket = bucket or SUPABASE_STORAGE_BUCKET
+    storage_path = f"{prefix}/{filename}"
+    supabase.storage.from_(bucket).upload(
         path=storage_path,
         file=file_bytes,
         file_options={"content-type": content_type, "upsert": "true"},
     )
-    return supabase.storage.from_(SUPABASE_STORAGE_BUCKET).get_public_url(storage_path)
+    return supabase.storage.from_(bucket).get_public_url(storage_path)
+
+
+def upload_private(file_bytes: bytes, filename: str, content_type: str,
+                   prefix: str) -> str:
+    """Upload bytes to the private ID bucket. Returns the *storage path* (not a URL)
+    so the caller can persist it and mint signed URLs on demand."""
+    if not supabase:
+        raise RuntimeError("Supabase Storage not configured")
+    storage_path = f"{prefix}/{filename}"
+    supabase.storage.from_(SUPABASE_ID_BUCKET).upload(
+        path=storage_path,
+        file=file_bytes,
+        file_options={"content-type": content_type, "upsert": "true"},
+    )
+    return storage_path
+
+
+def get_signed_url(storage_path: str, expires_in: int = 300, bucket: str = None) -> str:
+    """Mint a short-lived signed URL for a private storage object."""
+    if not supabase:
+        raise RuntimeError("Supabase Storage not configured")
+    bucket = bucket or SUPABASE_ID_BUCKET
+    result = supabase.storage.from_(bucket).create_signed_url(storage_path, expires_in)
+    # supabase-py returns {"signedURL": "..."} or {"signed_url": "..."} depending on version
+    return result.get("signedURL") or result.get("signed_url") or result.get("signedUrl")
+
+
+# --- Supabase JWT auth middleware -----------------------------------------
+# Used by civilian and commander verification endpoints. The legacy
+# /api/v1/login mock-JWT flow is left untouched for now.
+from functools import wraps
+from flask import g
+
+
+def _bearer_token():
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    return auth.split(" ", 1)[1].strip() or None
+
+
+def _resolve_supabase_user(token: str):
+    """Validate a Supabase access token and return the matching local User
+    (creating a Civilian row on first sight). Returns (user, error_response_or_None)."""
+    if not supabase:
+        return None, (jsonify({"error": "auth_unavailable"}), 503)
+    try:
+        resp = supabase.auth.get_user(token)
+        sb_user = getattr(resp, "user", None) or (resp.get("user") if isinstance(resp, dict) else None)
+    except Exception as e:
+        print(f"Supabase token validation failed: {e}")
+        return None, (jsonify({"error": "invalid_token"}), 401)
+    if not sb_user:
+        return None, (jsonify({"error": "invalid_token"}), 401)
+
+    email = getattr(sb_user, "email", None) or (sb_user.get("email") if isinstance(sb_user, dict) else None)
+    if not email:
+        return None, (jsonify({"error": "no_email_on_token"}), 401)
+
+    session = SessionLocal()
+    try:
+        user = session.query(User).filter(User.agency_id == email).first()
+        if not user:
+            # First-time civilian login via mobile/web — provision a local row.
+            user = User(
+                agency_id=email,
+                password_hash="managed_by_supabase",
+                role="Civilian",
+                id_verification_status="unverified",
+            )
+            session.add(user)
+            session.commit()
+            session.refresh(user)
+        # Detach so callers can use after session.close()
+        session.expunge(user)
+        return user, None
+    finally:
+        session.close()
+
+
+def require_supabase_user(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        token = _bearer_token()
+        if not token:
+            return jsonify({"error": "missing_token"}), 401
+        user, err = _resolve_supabase_user(token)
+        if err:
+            return err
+        g.current_user = user
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+def require_commander(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        token = _bearer_token()
+        if not token:
+            return jsonify({"error": "missing_token"}), 401
+        user, err = _resolve_supabase_user(token)
+        if err:
+            return err
+        if user.role != "Commander":
+            return jsonify({"error": "forbidden", "required_role": "Commander"}), 403
+        g.current_user = user
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+# Feature flag: when true, anonymous report submissions are rejected and the
+# caller MUST present a valid civilian token with approved verification.
+# When false (default during rollout), anonymous reports are still accepted
+# so the old mobile APK keeps working — but any *authenticated* civilian must
+# still be approved.
+REQUIRE_CIVILIAN_VERIFICATION = os.environ.get("REQUIRE_CIVILIAN_VERIFICATION", "false").lower() == "true"
+
+
+def civilian_gate():
+    """Inspect the request's bearer token (if any) and enforce civilian
+    verification. Returns None to allow the request, or a (response, status)
+    tuple to deny it. Responder/Commander tokens pass through. Anonymous
+    requests are allowed only when the feature flag is off."""
+    token = _bearer_token()
+    if not token:
+        if REQUIRE_CIVILIAN_VERIFICATION:
+            return jsonify({"error": "verification_required", "reason": "no_token"}), 401
+        return None
+    user, err = _resolve_supabase_user(token)
+    if err:
+        # Bad token — surface a clear error rather than silently allowing.
+        return err
+    g.current_user = user
+    if user.role != "Civilian":
+        return None  # Responders/Commanders are unaffected.
+    if user.id_verification_status != "approved":
+        return jsonify({
+            "error": "verification_required",
+            "status": user.id_verification_status,
+            "rejection_reason": user.id_rejection_reason,
+        }), 403
+    return None
 
 
 # Set up Static Folder for Images
@@ -1011,6 +1162,9 @@ def extract_frames(video_path, num_frames=10):
 # --- AI ANALYSIS ROUTE (UPDATED TO SAVE IMAGE) ---
 @app.route('/api/v1/analyze', methods=['POST'])
 def analyze_image():
+    gate = civilian_gate()
+    if gate is not None:
+        return gate
     if 'file' not in request.files:
         return jsonify({"error": "No file part"}), 400
     
@@ -1261,10 +1415,14 @@ def handle_reports():
             session.close()
             
     elif request.method == 'POST':
+        gate = civilian_gate()
+        if gate is not None:
+            session.close()
+            return gate
         from datetime import datetime
         try:
             data = request.get_json()
-            
+
             # 1. Extract Coords
             lat = data.get('latitude')
             lng = data.get('longitude')
@@ -1816,6 +1974,249 @@ def delete_asset(asset_id):
     finally:
         session.close()
         
+
+# --- CIVILIAN ID VERIFICATION ROUTES --------------------------------------
+
+ID_ALLOWED_MIME = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+ID_MAX_BYTES = 8 * 1024 * 1024  # 8 MB per file
+
+
+@app.route('/api/v1/civilian/signup', methods=['POST'])
+def civilian_signup():
+    """Create a civilian user via Supabase Auth + a local User row.
+    The caller is expected to also call supabase.auth.signInWithPassword
+    from the client to obtain a session token for subsequent requests."""
+    if not supabase:
+        return jsonify({"error": "auth_unavailable"}), 503
+    data = request.get_json() or {}
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+    full_name = (data.get("full_name") or "").strip() or None
+
+    if not email or not password:
+        return jsonify({"error": "missing_credentials"}), 400
+    if len(password) < 8:
+        return jsonify({"error": "password_too_short"}), 400
+
+    try:
+        # email_confirm=True so users can log in immediately; in production
+        # you may want the standard email-confirmation flow instead.
+        supabase.auth.admin.create_user({
+            "email": email,
+            "password": password,
+            "email_confirm": True,
+        })
+    except Exception as e:
+        msg = str(e)
+        if "already" in msg.lower() or "registered" in msg.lower():
+            return jsonify({"error": "email_already_registered"}), 409
+        print(f"Supabase signup failed: {e}")
+        return jsonify({"error": "signup_failed", "detail": msg}), 500
+
+    session = SessionLocal()
+    try:
+        existing = session.query(User).filter(User.agency_id == email).first()
+        if existing:
+            existing.role = existing.role or "Civilian"
+            existing.full_name = full_name or existing.full_name
+            user = existing
+        else:
+            user = User(
+                agency_id=email,
+                password_hash="managed_by_supabase",
+                role="Civilian",
+                full_name=full_name,
+                id_verification_status="unverified",
+            )
+            session.add(user)
+        session.commit()
+        session.refresh(user)
+        return jsonify(user.to_dict()), 201
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/v1/civilian/verification', methods=['GET'])
+@require_supabase_user
+def civilian_verification_status():
+    user = g.current_user
+    return jsonify({
+        "status": user.id_verification_status,
+        "rejection_reason": user.id_rejection_reason,
+        "submitted_at": user.id_submitted_at.isoformat() if user.id_submitted_at else None,
+        "reviewed_at": user.id_reviewed_at.isoformat() if user.id_reviewed_at else None,
+        "full_name": user.full_name,
+    }), 200
+
+
+@app.route('/api/v1/civilian/verification', methods=['POST'])
+@require_supabase_user
+def civilian_verification_submit():
+    """Multipart upload: fields `id_document` and `selfie` (both required)."""
+    user = g.current_user
+    if user.id_verification_status == "approved":
+        return jsonify({"error": "already_approved"}), 400
+
+    id_file = request.files.get("id_document")
+    selfie_file = request.files.get("selfie")
+    if not id_file or not selfie_file:
+        return jsonify({"error": "id_document_and_selfie_required"}), 400
+
+    def _validate(f, label):
+        mime = (f.mimetype or mimetypes.guess_type(f.filename or "")[0] or "").lower()
+        if mime not in ID_ALLOWED_MIME:
+            return f"{label}_must_be_image", None, None
+        data = f.read()
+        if len(data) > ID_MAX_BYTES:
+            return f"{label}_too_large", None, None
+        if len(data) == 0:
+            return f"{label}_empty", None, None
+        return None, data, mime
+
+    err, id_bytes, id_mime = _validate(id_file, "id_document")
+    if err:
+        return jsonify({"error": err}), 400
+    err, selfie_bytes, selfie_mime = _validate(selfie_file, "selfie")
+    if err:
+        return jsonify({"error": err}), 400
+
+    def _ext_from_mime(mime):
+        return {"image/jpeg": ".jpg", "image/jpg": ".jpg",
+                "image/png": ".png", "image/webp": ".webp"}.get(mime, ".jpg")
+
+    try:
+        id_filename = f"{uuid.uuid4().hex}{_ext_from_mime(id_mime)}"
+        selfie_filename = f"{uuid.uuid4().hex}{_ext_from_mime(selfie_mime)}"
+        id_path = upload_private(id_bytes, id_filename, id_mime,
+                                 prefix=f"user_{user.id}/id")
+        selfie_path = upload_private(selfie_bytes, selfie_filename, selfie_mime,
+                                     prefix=f"user_{user.id}/selfie")
+    except Exception as e:
+        print(f"ID upload failed: {e}")
+        return jsonify({"error": "storage_upload_failed", "detail": str(e)}), 500
+
+    session = SessionLocal()
+    try:
+        db_user = session.query(User).filter(User.id == user.id).first()
+        if not db_user:
+            return jsonify({"error": "user_missing"}), 404
+        db_user.id_document_path = id_path
+        db_user.selfie_path = selfie_path
+        db_user.id_verification_status = "pending"
+        db_user.id_rejection_reason = None
+        db_user.id_submitted_at = datetime.utcnow()
+        db_user.id_reviewed_at = None
+        db_user.id_reviewed_by = None
+        session.commit()
+        session.refresh(db_user)
+        socketio.emit('verification_submitted', {"user_id": db_user.id}, to="admin")
+        return jsonify(db_user.to_dict()), 200
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+# --- COMMANDER VERIFICATION QUEUE -----------------------------------------
+
+@app.route('/api/v1/admin/verifications', methods=['GET'])
+@require_commander
+def admin_list_verifications():
+    status_filter = request.args.get("status", "pending")
+    session = SessionLocal()
+    try:
+        q = session.query(User).filter(User.role == "Civilian")
+        if status_filter and status_filter != "all":
+            q = q.filter(User.id_verification_status == status_filter)
+        # Oldest pending first so the queue is FIFO.
+        users = q.order_by(User.id_submitted_at.asc()).limit(200).all()
+        return jsonify([u.to_dict() for u in users]), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/v1/admin/verifications/<int:user_id>', methods=['GET'])
+@require_commander
+def admin_get_verification(user_id):
+    session = SessionLocal()
+    try:
+        u = session.query(User).filter(User.id == user_id).first()
+        if not u:
+            return jsonify({"error": "not_found"}), 404
+        payload = u.to_dict()
+        try:
+            payload["id_document_url"] = get_signed_url(u.id_document_path) if u.id_document_path else None
+            payload["selfie_url"] = get_signed_url(u.selfie_path) if u.selfie_path else None
+        except Exception as e:
+            print(f"Signed URL mint failed: {e}")
+            payload["id_document_url"] = None
+            payload["selfie_url"] = None
+        return jsonify(payload), 200
+    finally:
+        session.close()
+
+
+@app.route('/api/v1/admin/verifications/<int:user_id>/approve', methods=['POST'])
+@require_commander
+def admin_approve_verification(user_id):
+    reviewer = g.current_user
+    session = SessionLocal()
+    try:
+        u = session.query(User).filter(User.id == user_id).first()
+        if not u:
+            return jsonify({"error": "not_found"}), 404
+        if u.id_verification_status != "pending":
+            return jsonify({"error": "not_pending", "current_status": u.id_verification_status}), 400
+        u.id_verification_status = "approved"
+        u.id_rejection_reason = None
+        u.id_reviewed_at = datetime.utcnow()
+        u.id_reviewed_by = reviewer.id
+        session.commit()
+        session.refresh(u)
+        socketio.emit('verification_decided', {"user_id": u.id, "status": "approved"})
+        return jsonify(u.to_dict()), 200
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/v1/admin/verifications/<int:user_id>/reject', methods=['POST'])
+@require_commander
+def admin_reject_verification(user_id):
+    reviewer = g.current_user
+    data = request.get_json() or {}
+    reason = (data.get("reason") or "").strip()
+    if not reason:
+        return jsonify({"error": "reason_required"}), 400
+    session = SessionLocal()
+    try:
+        u = session.query(User).filter(User.id == user_id).first()
+        if not u:
+            return jsonify({"error": "not_found"}), 404
+        if u.id_verification_status != "pending":
+            return jsonify({"error": "not_pending", "current_status": u.id_verification_status}), 400
+        u.id_verification_status = "rejected"
+        u.id_rejection_reason = reason
+        u.id_reviewed_at = datetime.utcnow()
+        u.id_reviewed_by = reviewer.id
+        session.commit()
+        session.refresh(u)
+        socketio.emit('verification_decided', {"user_id": u.id, "status": "rejected"})
+        return jsonify(u.to_dict()), 200
+    except Exception as e:
+        session.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))

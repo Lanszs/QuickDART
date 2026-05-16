@@ -3,6 +3,10 @@ dependencies
 /node_modules
 /.venv
 /venv
+.venv/
+venv/
+**/venv/
+**/.venv/
 
 environment files
 

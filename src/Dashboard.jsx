@@ -15,14 +15,16 @@ import {
     ChevronDown, 
     ChevronUp, 
     BarChart2,
-    MessageSquare, 
+    MessageSquare,
     Send,
     User,
     CheckCircle,
     AlertCircle,
-    XCircle
+    XCircle,
+    ShieldCheck
 } from 'lucide-react';
 import DamageReports from './DamageReports';
+import VerificationQueue from './VerificationQueue';
 import { io } from 'socket.io-client';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -475,7 +477,8 @@ const Dashboard = ({ userRole, onLogout }) => {
                     <NavButton active={activeTab === 'dispatch'} onClick={() => handleNavigation('dispatch')} icon={<MessageSquare size={18} />} label="Dispatch / Chat" />
                     <NavButton active={activeTab === 'damage_reports'} onClick={() => handleNavigation('damage_reports')} icon={<FileText size={18} />} label="Damage Reports" />
                     <NavButton active={activeTab === 'statistics'} onClick={() => handleNavigation('statistics')} icon={<BarChart2 size={18} />} label="Analytics" />
-                    
+                    <NavButton active={activeTab === 'verifications'} onClick={() => handleNavigation('verifications')} icon={<ShieldCheck size={18} />} label="Verification Queue" />
+
                     <div className="flex-grow"></div>
                     <NavButton active={activeTab === 'settings'} onClick={() => handleNavigation('settings')} icon={<Settings size={18} />} label="Settings" />
                 </nav>
@@ -609,7 +612,10 @@ const Dashboard = ({ userRole, onLogout }) => {
                     {/* VIEW 5: STATISTICS */}
                     {activeTab === 'statistics' && <Statistics reports={reports} teams={teams} />}
 
-                    {/* VIEW 6: SETTINGS */}
+                    {/* VIEW 6: VERIFICATION QUEUE */}
+                    {activeTab === 'verifications' && <VerificationQueue />}
+
+                    {/* VIEW 7: SETTINGS */}
                     {activeTab === 'settings' && <SettingsPage />}
 
                 </main>

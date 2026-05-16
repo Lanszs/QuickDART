@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Dashboard from './Dashboard';
 import ResponderDashboard from './ResponderDashboard';
-import GuestDashboard from './GuestDashboard';
+import CivilianApp from './CivilianApp';
 import { Shield, User, Map as MapIcon, ArrowRight } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { API_URL } from './config';
@@ -238,7 +238,7 @@ const App = () => {
   if (isLoading) return <LoadingScreen />;
 
   if (appMode === 'welcome') return <WelcomeScreen onSelectMode={setAppMode} />;
-  if (appMode === 'guest') return <GuestDashboard onBack={() => setAppMode('welcome')} />;
+  if (appMode === 'guest') return <CivilianApp onBack={() => setAppMode('welcome')} />;
 
   return (
     <div className="flex flex-col min-h-screen font-sans bg-gray-50">

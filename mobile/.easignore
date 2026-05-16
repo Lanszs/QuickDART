@@ -1,0 +1,39 @@
+# IMPORTANT: build this APK with EAS_NO_VCS=1, e.g.
+#   EAS_NO_VCS=1 npx eas build --platform android --profile production
+#
+# Why: the repo commits ~900 MB of ResNet50 .pth weights at ml_engine/. EAS's
+# default git VCS archiver uploads ALL tracked files (ignoring .easignore), so
+# every git-mode build uploaded 808 MB and errored. EAS_NO_VCS=1 switches to a
+# filesystem archive that DOES honor this file.
+#
+# Gotcha: even under EAS_NO_VCS the archive root is the REPO root (not mobile/),
+# and patterns use .gitignore "match at any depth" semantics. So we exclude the
+# heavy non-mobile directories BY SPECIFIC NAME. Never put bare `src/`, `build/`
+# or `public/` here — those would also match mobile/src and break the bundle.
+
+# Backend (Flask + PyTorch venv + committed test media) — ~5 GB, not needed
+backend/
+
+# Committed ML model weights — the ~900 MB that broke every prior build
+ml_engine/
+*.pth
+*.pt
+*.onnx
+
+# Training datasets / archives / intermediates
+dataset_*/
+raw_data/
+sorted_frames/
+extracted_frames/
+*.zip
+*.tgz
+*.tar
+
+# Dependencies (EAS reinstalls from package.json on the build server) + VCS
+node_modules/
+.git/
+.expo/
+*.log
+*.sqlite
+*.db
+.DS_Store

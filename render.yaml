@@ -20,6 +20,12 @@ services:
       # Non-secret config
       - key: SUPABASE_STORAGE_BUCKET
         value: quickdart-uploads
+      - key: SUPABASE_ID_BUCKET
+        value: quickdart-id-documents
+      # Flip to "true" once the new APK is widely installed to refuse
+      # anonymous report submissions from leftover old-APK clients.
+      - key: REQUIRE_CIVILIAN_VERIFICATION
+        value: "false"
       - key: FLASK_DEBUG
         value: "false"
       - key: PYTHONUNBUFFERED
