@@ -1,19 +1,11 @@
 import React, { useState } from 'react';
-import {
-    ActivityIndicator,
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
-} from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { supabase } from '../lib/supabase';
 import { civilianSignup } from '../api';
 import type { RootStackParamList } from '../navigation';
+import { AuthHero, Button, Card, Field, Notice } from '../components/ui';
+import { colors, spacing } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Signup'>;
 
@@ -26,19 +18,20 @@ export default function SignupScreen({ navigation }: Props) {
 
     const onSubmit = async () => {
         setError('');
-        if (password.length < 8) {
-            setError('Password must be at least 8 characters.');
-            return;
-        }
         if (!fullName.trim()) {
             setError('Please enter your full name.');
             return;
         }
+        if (password.length < 8) {
+            setError('Password must be at least 8 characters.');
+            return;
+        }
         setBusy(true);
         try {
-            await civilianSignup(email.trim().toLowerCase(), password, fullName.trim());
+            const normEmail = email.trim().toLowerCase();
+            await civilianSignup(normEmail, password, fullName.trim());
             const { error: signInError } = await supabase.auth.signInWithPassword({
-                email: email.trim().toLowerCase(),
+                email: normEmail,
                 password,
             });
             if (signInError) throw signInError;
@@ -56,93 +49,72 @@ export default function SignupScreen({ navigation }: Props) {
     return (
         <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={styles.container}
+            style={styles.flex}
         >
-            <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-                <Text style={styles.title}>Create your account</Text>
-                <Text style={styles.subtitle}>You&apos;ll verify your identity right after.</Text>
+            <ScrollView
+                style={styles.flex}
+                contentContainerStyle={{ flexGrow: 1 }}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+            >
+                <AuthHero title="Create account" subtitle="You'll verify your identity in the next step." />
+                <View style={styles.body}>
+                    <Card style={styles.card}>
+                        {error ? <Notice tone="error" message={error} /> : null}
 
-                {error ? (
-                    <View style={styles.errorBox}>
-                        <Text style={styles.errorText}>{error}</Text>
-                    </View>
-                ) : null}
+                        <Field
+                            label="Full name"
+                            icon="person-outline"
+                            value={fullName}
+                            onChangeText={setFullName}
+                            placeholder="Juan Dela Cruz"
+                            editable={!busy}
+                        />
+                        <Field
+                            label="Email"
+                            icon="mail-outline"
+                            value={email}
+                            onChangeText={setEmail}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            keyboardType="email-address"
+                            placeholder="you@example.com"
+                            editable={!busy}
+                        />
+                        <Field
+                            label="Password"
+                            icon="lock-closed-outline"
+                            value={password}
+                            onChangeText={setPassword}
+                            secureTextEntry
+                            placeholder="at least 8 characters"
+                            editable={!busy}
+                        />
 
-                <Text style={styles.label}>Full name</Text>
-                <TextInput
-                    value={fullName}
-                    onChangeText={setFullName}
-                    placeholder="Juan Dela Cruz"
-                    placeholderTextColor="#9ca3af"
-                    style={styles.input}
-                    editable={!busy}
-                />
+                        <Button
+                            title="Create account"
+                            icon="person-add-outline"
+                            onPress={onSubmit}
+                            loading={busy}
+                            style={{ marginTop: spacing.sm }}
+                        />
+                    </Card>
 
-                <Text style={styles.label}>Email</Text>
-                <TextInput
-                    value={email}
-                    onChangeText={setEmail}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    keyboardType="email-address"
-                    placeholder="you@example.com"
-                    placeholderTextColor="#9ca3af"
-                    style={styles.input}
-                    editable={!busy}
-                />
-
-                <Text style={styles.label}>Password</Text>
-                <TextInput
-                    value={password}
-                    onChangeText={setPassword}
-                    secureTextEntry
-                    placeholder="at least 8 characters"
-                    placeholderTextColor="#9ca3af"
-                    style={styles.input}
-                    editable={!busy}
-                />
-
-                <Pressable style={[styles.primaryBtn, busy && styles.btnDisabled]} onPress={onSubmit} disabled={busy}>
-                    {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Create account</Text>}
-                </Pressable>
-
-                <Pressable onPress={() => navigation.goBack()} disabled={busy}>
-                    <Text style={styles.linkText}>
-                        Already have an account? <Text style={styles.linkStrong}>Log in</Text>
-                    </Text>
-                </Pressable>
+                    <Pressable onPress={() => navigation.goBack()} disabled={busy} hitSlop={8}>
+                        <Text style={styles.linkText}>
+                            Already have an account? <Text style={styles.linkStrong}>Log in</Text>
+                        </Text>
+                    </Pressable>
+                </View>
             </ScrollView>
         </KeyboardAvoidingView>
     );
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#f9fafb' },
-    scroll: { padding: 24, flexGrow: 1, justifyContent: 'center' },
-    title: { fontSize: 26, fontWeight: '800', color: '#111827', textAlign: 'center' },
-    subtitle: { fontSize: 14, color: '#6b7280', textAlign: 'center', marginTop: 6, marginBottom: 24 },
-    label: { fontSize: 11, fontWeight: '800', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6, marginTop: 12 },
-    input: {
-        backgroundColor: '#ffffff',
-        borderWidth: 1,
-        borderColor: '#e5e7eb',
-        borderRadius: 12,
-        paddingVertical: 12,
-        paddingHorizontal: 14,
-        fontSize: 16,
-        color: '#111827',
-    },
-    primaryBtn: {
-        backgroundColor: '#2563eb',
-        borderRadius: 16,
-        paddingVertical: 16,
-        alignItems: 'center',
-        marginTop: 24,
-    },
-    btnDisabled: { opacity: 0.6 },
-    primaryBtnText: { color: '#ffffff', fontSize: 16, fontWeight: '700' },
-    linkText: { textAlign: 'center', marginTop: 18, color: '#6b7280', fontSize: 14 },
-    linkStrong: { color: '#2563eb', fontWeight: '700' },
-    errorBox: { backgroundColor: '#fee2e2', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#fecaca', marginBottom: 4 },
-    errorText: { color: '#991b1b', fontSize: 13, fontWeight: '600' },
+    flex: { flex: 1, backgroundColor: colors.bg },
+    body: { flex: 1, paddingHorizontal: spacing.xl, paddingBottom: spacing.xxl },
+    card: { marginTop: -spacing.xxl },
+    linkText: { textAlign: 'center', marginTop: spacing.xxl, color: colors.textMuted, fontSize: 14.5 },
+    linkStrong: { color: colors.primary, fontWeight: '800' },
 });

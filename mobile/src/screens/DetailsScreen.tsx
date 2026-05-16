@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
     Alert,
     FlatList,
     Image,
@@ -25,6 +24,8 @@ import {
 import { generateAIDescription } from '../lib/generateAIDescription';
 import { DEFAULT_LATITUDE, DEFAULT_LONGITUDE } from '../config';
 import type { RootStackParamList } from '../navigation';
+import { Button, Card, SectionLabel } from '../components/ui';
+import { colors, radius, spacing, typography } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Details'>;
 
@@ -181,6 +182,7 @@ export default function DetailsScreen({ route, navigation }: Props) {
             <ScrollView
                 contentContainerStyle={styles.scroll}
                 keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
             >
                 <View style={styles.previewBox}>
                     {!isVideo ? (
@@ -192,10 +194,15 @@ export default function DetailsScreen({ route, navigation }: Props) {
                     )}
                 </View>
 
-                <View style={styles.card}>
-                    <Text style={styles.cardTitle}>AI Analysis</Text>
+                <Card style={styles.card}>
+                    <SectionLabel>AI analysis</SectionLabel>
                     <View style={styles.badgeRow}>
-                        <View style={[styles.badge, analysisResult.type === 'No Disaster' ? styles.badgeGreen : styles.badgeRed]}>
+                        <View
+                            style={[
+                                styles.badge,
+                                analysisResult.type === 'No Disaster' ? styles.badgeGreen : styles.badgeRed,
+                            ]}
+                        >
                             <Text style={styles.badgeText}>{String(analysisResult.type).toUpperCase()}</Text>
                         </View>
                         <Text style={styles.confidenceLabel}>Confidence: {confidenceText}</Text>
@@ -204,44 +211,36 @@ export default function DetailsScreen({ route, navigation }: Props) {
 
                     {analysisResult.type_distribution && (
                         <DistributionBar
-                            title="Disaster Type Distribution"
+                            title="Disaster type distribution"
                             distribution={analysisResult.type_distribution as Record<string, number>}
-                            colorMap={{ Earthquake: '#f59e0b', Fire: '#ef4444', Flood: '#3b82f6', 'No Disaster': '#22c55e' }}
+                            colorMap={{ Earthquake: '#F59E0B', Fire: '#EF4444', Flood: '#3B82F6', 'No Disaster': '#22C55E' }}
                         />
                     )}
                     {analysisResult.damage_distribution && (
                         <DistributionBar
-                            title="Damage Distribution"
+                            title="Damage distribution"
                             distribution={analysisResult.damage_distribution as Record<string, number>}
-                            colorMap={{ Destroyed: '#dc2626', Major: '#f97316', Minor: '#eab308', 'No Damage': '#22c55e' }}
+                            colorMap={{ Destroyed: '#DC2626', Major: '#F97316', Minor: '#EAB308', 'No Damage': '#22C55E' }}
                         />
                     )}
-                </View>
+                </Card>
 
-                <View style={styles.card}>
-                    <Text style={styles.cardTitle}>Location</Text>
+                <Card style={styles.card}>
+                    <SectionLabel>Location</SectionLabel>
                     {locating ? (
-                        <View style={styles.locatingRow}>
-                            <ActivityIndicator color="#2563eb" />
-                            <Text style={styles.locatingText}>Getting your GPS location…</Text>
-                        </View>
+                        <Text style={styles.locatingText}>Getting your GPS location…</Text>
                     ) : null}
 
                     <TextInput
                         style={[styles.input, locationError && styles.inputError]}
                         placeholder="Enter address or landmark"
-                        placeholderTextColor="#9ca3af"
+                        placeholderTextColor={colors.textFaint}
                         value={location}
                         onChangeText={onChangeLocation}
                         autoCorrect={false}
                     />
-                    {locationError ? (
-                        <Text style={styles.errorText}>Location is required.</Text>
-                    ) : null}
-
-                    {searching ? (
-                        <Text style={styles.searchingText}>Searching…</Text>
-                    ) : null}
+                    {locationError ? <Text style={styles.errorText}>Location is required.</Text> : null}
+                    {searching ? <Text style={styles.searchingText}>Searching…</Text> : null}
 
                     {suggestions.length > 0 ? (
                         <View style={styles.suggestions}>
@@ -268,33 +267,29 @@ export default function DetailsScreen({ route, navigation }: Props) {
                             {latitude.toFixed(5)}, {longitude.toFixed(5)}
                         </Text>
                     ) : null}
-                </View>
+                </Card>
 
-                <View style={styles.card}>
-                    <Text style={styles.cardTitle}>Description (optional)</Text>
+                <Card style={styles.card}>
+                    <SectionLabel>Description (optional)</SectionLabel>
                     <TextInput
                         style={[styles.input, styles.textarea]}
                         placeholder="Add details — leave blank to use the AI-generated summary."
-                        placeholderTextColor="#9ca3af"
+                        placeholderTextColor={colors.textFaint}
                         value={description}
                         onChangeText={setDescription}
                         multiline
                         numberOfLines={5}
                         textAlignVertical="top"
                     />
-                </View>
+                </Card>
 
-                <Pressable
-                    style={[styles.submitBtn, submitting && styles.submitBtnDisabled]}
+                <Button
+                    title="Submit report"
+                    icon="send"
                     onPress={handleSubmit}
-                    disabled={submitting}
-                >
-                    {submitting ? (
-                        <ActivityIndicator color="#ffffff" />
-                    ) : (
-                        <Text style={styles.submitBtnText}>Submit Report</Text>
-                    )}
-                </Pressable>
+                    loading={submitting}
+                    style={{ marginTop: spacing.xs }}
+                />
             </ScrollView>
         </KeyboardAvoidingView>
     );
@@ -328,14 +323,14 @@ function DistributionBar({
                 {entries.map(([name, pct]) => (
                     <View
                         key={name}
-                        style={[distStyles.segment, { flex: pct, backgroundColor: colorMap[name] ?? '#9ca3af' }]}
+                        style={[distStyles.segment, { flex: pct, backgroundColor: colorMap[name] ?? colors.textFaint }]}
                     />
                 ))}
             </View>
             <View style={distStyles.labels}>
                 {entries.map(([name, pct]) => (
                     <View key={name} style={distStyles.labelItem}>
-                        <View style={[distStyles.dot, { backgroundColor: colorMap[name] ?? '#9ca3af' }]} />
+                        <View style={[distStyles.dot, { backgroundColor: colorMap[name] ?? colors.textFaint }]} />
                         <Text style={distStyles.labelText}>{name}: {pct}%</Text>
                     </View>
                 ))}
@@ -345,91 +340,78 @@ function DistributionBar({
 }
 
 const distStyles = StyleSheet.create({
-    wrapper: { marginTop: 12 },
-    title: { fontSize: 11, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', marginBottom: 6 },
+    wrapper: { marginTop: spacing.md },
+    title: { ...typography.sectionLabel, marginBottom: spacing.sm },
     bar: {
         flexDirection: 'row',
         height: 10,
-        borderRadius: 6,
+        borderRadius: radius.sm,
         overflow: 'hidden',
-        backgroundColor: '#f3f4f6',
+        backgroundColor: colors.surfaceAlt,
     },
     segment: { height: 10 },
-    labels: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
-    labelItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    labels: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },
+    labelItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
     dot: { width: 8, height: 8, borderRadius: 4 },
-    labelText: { fontSize: 11, color: '#6b7280' },
+    labelText: { fontSize: 11, color: colors.textMuted },
 });
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#f9fafb' },
-    scroll: { padding: 16, paddingBottom: 48 },
+    container: { flex: 1, backgroundColor: colors.bg },
+    scroll: { padding: spacing.lg, paddingBottom: spacing.xxxl },
     previewBox: {
-        borderRadius: 16,
+        borderRadius: radius.lg,
         overflow: 'hidden',
         backgroundColor: '#000',
-        marginBottom: 16,
+        marginBottom: spacing.lg,
     },
     preview: { width: '100%', height: 200 },
     videoPlaceholder: { alignItems: 'center', justifyContent: 'center' },
     videoLabel: { color: '#fff', fontWeight: '800', letterSpacing: 2 },
-    card: {
-        backgroundColor: '#ffffff',
-        borderRadius: 16,
-        padding: 16,
-        marginBottom: 12,
-        borderWidth: 1,
-        borderColor: '#e5e7eb',
-    },
-    cardTitle: { fontSize: 14, fontWeight: '800', color: '#111827', marginBottom: 8 },
-    row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
-    rowLabel: { color: '#6b7280', fontSize: 14 },
-    rowValue: { color: '#111827', fontSize: 14, fontWeight: '600' },
+    card: { marginBottom: spacing.md },
+    row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.xs },
+    rowLabel: { color: colors.textMuted, fontSize: 14 },
+    rowValue: { color: colors.text, fontSize: 14, fontWeight: '700' },
     input: {
         borderWidth: 1,
-        borderColor: '#d1d5db',
-        borderRadius: 10,
-        paddingHorizontal: 12,
-        paddingVertical: 10,
+        borderColor: colors.border,
+        borderRadius: radius.md,
+        paddingHorizontal: spacing.lg,
+        paddingVertical: spacing.md,
         fontSize: 15,
-        color: '#111827',
-        backgroundColor: '#fff',
+        color: colors.text,
+        backgroundColor: colors.surface,
     },
-    inputError: { borderColor: '#ef4444' },
-    errorText: { color: '#ef4444', fontSize: 12, marginTop: 4 },
+    inputError: { borderColor: colors.danger },
+    errorText: { color: colors.danger, fontSize: 12, marginTop: spacing.xs, fontWeight: '600' },
     textarea: { minHeight: 110 },
-    locatingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-    locatingText: { color: '#2563eb', fontSize: 13 },
-    searchingText: { fontSize: 12, color: '#6b7280', marginTop: 6 },
+    locatingText: { color: colors.primary, fontSize: 13, marginBottom: spacing.sm },
+    searchingText: { fontSize: 12, color: colors.textMuted, marginTop: spacing.sm },
     suggestions: {
-        marginTop: 8,
+        marginTop: spacing.sm,
         borderWidth: 1,
-        borderColor: '#e5e7eb',
-        borderRadius: 10,
-        backgroundColor: '#fff',
+        borderColor: colors.border,
+        borderRadius: radius.md,
+        backgroundColor: colors.surface,
         overflow: 'hidden',
     },
     suggestionItem: {
-        paddingHorizontal: 12,
-        paddingVertical: 10,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.md,
         borderBottomWidth: 1,
-        borderBottomColor: '#f3f4f6',
+        borderBottomColor: colors.surfaceAlt,
     },
-    suggestionText: { fontSize: 13, color: '#1f2937' },
-    coords: { marginTop: 6, fontSize: 11, color: '#9ca3af', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
-    submitBtn: {
-        marginTop: 8,
-        backgroundColor: '#2563eb',
-        borderRadius: 16,
-        paddingVertical: 16,
-        alignItems: 'center',
+    suggestionText: { fontSize: 13, color: colors.text },
+    coords: {
+        marginTop: spacing.sm,
+        fontSize: 11,
+        color: colors.textFaint,
+        fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     },
-    submitBtnDisabled: { opacity: 0.6 },
-    submitBtnText: { color: '#ffffff', fontSize: 16, fontWeight: '700' },
-    badgeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-    badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
-    badgeRed: { backgroundColor: '#ef4444' },
-    badgeGreen: { backgroundColor: '#22c55e' },
+    badgeRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.sm },
+    badge: { paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: radius.sm },
+    badgeRed: { backgroundColor: colors.danger },
+    badgeGreen: { backgroundColor: colors.success },
     badgeText: { color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
-    confidenceLabel: { fontSize: 13, color: '#6b7280' },
+    confidenceLabel: { fontSize: 13, color: colors.textMuted },
 });

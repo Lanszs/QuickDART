@@ -39,12 +39,12 @@ export default function App() {
           <Stack.Screen
             name="Signup"
             component={SignupScreen}
-            options={{ title: 'Create account' }}
+            options={{ headerShown: false }}
           />
           <Stack.Screen
             name="IdVerification"
             component={IdVerificationScreen}
-            options={{ title: 'Identity Verification' }}
+            options={{ headerShown: false }}
           />
           <Stack.Screen
             name="VerificationPending"

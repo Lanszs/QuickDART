@@ -1,29 +1,18 @@
 import React, { useState } from 'react';
-import {
-    ActivityIndicator,
-    Alert,
-    Image,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    View,
-} from 'react-native';
+import { Alert, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { submitVerification, type PickedAsset } from '../api';
-import { supabase } from '../lib/supabase';
+import { signOut } from '../lib/supabase';
 import type { RootStackParamList } from '../navigation';
+import { AppHeader, Button, Card, Notice, Screen } from '../components/ui';
+import { colors, radius, spacing, typography } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'IdVerification'>;
 
 function toPicked(asset: ImagePicker.ImagePickerAsset): PickedAsset {
-    return {
-        uri: asset.uri,
-        fileName: asset.fileName,
-        mimeType: asset.mimeType,
-        type: asset.type,
-    };
+    return { uri: asset.uri, fileName: asset.fileName, mimeType: asset.mimeType, type: asset.type };
 }
 
 export default function IdVerificationScreen({ navigation, route }: Props) {
@@ -39,10 +28,7 @@ export default function IdVerificationScreen({ navigation, route }: Props) {
             Alert.alert('Permission needed', 'Photo library access is required.');
             return;
         }
-        const res = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'],
-            quality: 0.9,
-        });
+        const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.9 });
         if (!res.canceled && res.assets?.[0]) setIdAsset(toPicked(res.assets[0]));
     };
 
@@ -66,7 +52,6 @@ export default function IdVerificationScreen({ navigation, route }: Props) {
             Alert.alert('Permission needed', 'Camera access is required for the selfie.');
             return;
         }
-        // Front camera + no gallery option → forces a live capture.
         const res = await ImagePicker.launchCameraAsync({
             mediaTypes: ['images'],
             quality: 0.9,
@@ -92,148 +77,163 @@ export default function IdVerificationScreen({ navigation, route }: Props) {
     };
 
     const onSignOut = async () => {
-        await supabase.auth.signOut();
+        await signOut();
         navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
     };
 
-    const ready = idAsset && selfieAsset && !submitting;
+    const ready = !!idAsset && !!selfieAsset && !submitting;
+
+    const Step = ({ done, num, label }: { done: boolean; num: number; label: string }) => (
+        <View style={styles.step}>
+            <View style={[styles.stepDot, done && styles.stepDotDone]}>
+                {done ? (
+                    <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+                ) : (
+                    <Text style={styles.stepNum}>{num}</Text>
+                )}
+            </View>
+            <Text style={[styles.stepLabel, done && styles.stepLabelDone]}>{label}</Text>
+        </View>
+    );
 
     return (
-        <ScrollView style={styles.container} contentContainerStyle={styles.scroll}>
-            <View style={styles.header}>
-                <Text style={styles.brand}>Identity Verification</Text>
-                <Pressable onPress={onSignOut}>
-                    <Text style={styles.signOut}>Sign out</Text>
-                </Pressable>
-            </View>
+        <View style={styles.flex}>
+            <AppHeader subtitle="Identity verification" onSignOut={onSignOut} />
+            <Screen scroll>
+                {rejectionReason ? (
+                    <Notice
+                        tone="error"
+                        title="Previous submission rejected"
+                        message={`${rejectionReason}\n\nPlease re-upload your documents.`}
+                    />
+                ) : null}
 
-            {rejectionReason ? (
-                <View style={styles.rejectionBox}>
-                    <Text style={styles.rejectionTitle}>Previous submission rejected</Text>
-                    <Text style={styles.rejectionText}>{rejectionReason}</Text>
-                    <Text style={styles.rejectionHint}>Please re-upload your documents.</Text>
+                <Text style={styles.title}>Verify your identity</Text>
+                <Text style={styles.lead}>
+                    A commander reviews your documents before you can file reports. This keeps the
+                    response queue trustworthy.
+                </Text>
+
+                <View style={styles.steps}>
+                    <Step done={!!idAsset} num={1} label="Government ID" />
+                    <View style={styles.stepBar} />
+                    <Step done={!!selfieAsset} num={2} label="Live selfie" />
                 </View>
-            ) : null}
 
-            <Text style={styles.intro}>
-                Upload a clear photo of a government-issued ID and take a live selfie. A Commander
-                will review your submission before you can submit reports.
-            </Text>
+                <Card style={styles.slot}>
+                    <View style={styles.slotHead}>
+                        <Ionicons name="card-outline" size={18} color={colors.primary} />
+                        <Text style={styles.slotTitle}>Government ID</Text>
+                        {idAsset ? (
+                            <View style={styles.chip}>
+                                <Ionicons name="checkmark-circle" size={14} color={colors.success} />
+                                <Text style={styles.chipText}>Added</Text>
+                            </View>
+                        ) : null}
+                    </View>
+                    {idAsset ? (
+                        <>
+                            <Image source={{ uri: idAsset.uri }} style={styles.preview} resizeMode="contain" />
+                            <Pressable onPress={() => setIdAsset(null)} hitSlop={8} style={styles.changeBtn}>
+                                <Ionicons name="refresh" size={15} color={colors.textMuted} />
+                                <Text style={styles.changeText}>Choose a different image</Text>
+                            </Pressable>
+                        </>
+                    ) : (
+                        <View style={styles.btnRow}>
+                            <Button title="Camera" icon="camera-outline" variant="secondary" onPress={captureIdFromCamera} style={styles.half} />
+                            <Button title="Gallery" icon="images-outline" variant="secondary" onPress={pickIdFromGallery} style={styles.half} />
+                        </View>
+                    )}
+                </Card>
 
-            <Text style={styles.sectionLabel}>Government ID</Text>
-            {idAsset ? (
-                <View style={styles.previewBox}>
-                    <Image source={{ uri: idAsset.uri }} style={styles.preview} resizeMode="contain" />
-                    <Pressable onPress={() => setIdAsset(null)}>
-                        <Text style={styles.retake}>Choose a different image</Text>
-                    </Pressable>
-                </View>
-            ) : (
-                <View style={styles.btnRow}>
-                    <Pressable style={[styles.secondaryBtn, styles.btnHalf]} onPress={captureIdFromCamera}>
-                        <Text style={styles.secondaryBtnText}>Take Photo</Text>
-                    </Pressable>
-                    <Pressable style={[styles.secondaryBtn, styles.btnHalf]} onPress={pickIdFromGallery}>
-                        <Text style={styles.secondaryBtnText}>From Gallery</Text>
-                    </Pressable>
-                </View>
-            )}
+                <Card style={styles.slot}>
+                    <View style={styles.slotHead}>
+                        <Ionicons name="happy-outline" size={18} color={colors.primary} />
+                        <Text style={styles.slotTitle}>Live selfie</Text>
+                        {selfieAsset ? (
+                            <View style={styles.chip}>
+                                <Ionicons name="checkmark-circle" size={14} color={colors.success} />
+                                <Text style={styles.chipText}>Added</Text>
+                            </View>
+                        ) : null}
+                    </View>
+                    {selfieAsset ? (
+                        <>
+                            <Image source={{ uri: selfieAsset.uri }} style={styles.preview} resizeMode="contain" />
+                            <Pressable onPress={() => setSelfieAsset(null)} hitSlop={8} style={styles.changeBtn}>
+                                <Ionicons name="refresh" size={15} color={colors.textMuted} />
+                                <Text style={styles.changeText}>Retake</Text>
+                            </Pressable>
+                        </>
+                    ) : (
+                        <Button title="Open selfie camera" icon="camera-reverse-outline" variant="secondary" onPress={captureSelfie} />
+                    )}
+                </Card>
 
-            <Text style={styles.sectionLabel}>Live Selfie</Text>
-            {selfieAsset ? (
-                <View style={styles.previewBox}>
-                    <Image source={{ uri: selfieAsset.uri }} style={styles.preview} resizeMode="contain" />
-                    <Pressable onPress={() => setSelfieAsset(null)}>
-                        <Text style={styles.retake}>Retake</Text>
-                    </Pressable>
-                </View>
-            ) : (
-                <Pressable style={styles.primaryBtn} onPress={captureSelfie}>
-                    <Text style={styles.primaryBtnText}>Open Selfie Camera</Text>
-                </Pressable>
-            )}
-
-            <Pressable
-                style={[styles.submitBtn, !ready && styles.btnDisabled]}
-                onPress={onSubmit}
-                disabled={!ready}
-            >
-                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitBtnText}>Submit for review</Text>}
-            </Pressable>
-        </ScrollView>
+                <Button
+                    title="Submit for review"
+                    icon="shield-checkmark"
+                    onPress={onSubmit}
+                    loading={submitting}
+                    disabled={!ready}
+                    style={{ marginTop: spacing.lg }}
+                />
+            </Screen>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#f9fafb' },
-    scroll: { padding: 20, paddingBottom: 40 },
-    header: {
+    flex: { flex: 1, backgroundColor: colors.bg },
+    title: { ...typography.display, marginBottom: spacing.xs },
+    lead: { ...typography.subtitle, marginBottom: spacing.xl },
+
+    steps: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.xl },
+    step: { alignItems: 'center', gap: 6 },
+    stepDot: {
+        width: 30,
+        height: 30,
+        borderRadius: radius.pill,
+        backgroundColor: colors.surfaceAlt,
+        borderWidth: 1.5,
+        borderColor: colors.borderStrong,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    stepDotDone: { backgroundColor: colors.success, borderColor: colors.success },
+    stepNum: { fontSize: 13, fontWeight: '800', color: colors.textMuted },
+    stepLabel: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
+    stepLabelDone: { color: colors.text },
+    stepBar: { flex: 1, height: 2, backgroundColor: colors.border, marginHorizontal: spacing.md, marginBottom: 18 },
+
+    slot: { marginBottom: spacing.lg },
+    slotHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.lg },
+    slotTitle: { flex: 1, fontSize: 15, fontWeight: '800', color: colors.text },
+    chip: {
         flexDirection: 'row',
-        justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 16,
+        gap: 4,
+        backgroundColor: colors.successSoft,
+        paddingHorizontal: spacing.md,
+        paddingVertical: 4,
+        borderRadius: radius.pill,
     },
-    brand: { fontSize: 20, fontWeight: '800', color: '#111827' },
-    signOut: { color: '#6b7280', fontSize: 13, fontWeight: '600' },
-    intro: { color: '#6b7280', fontSize: 14, marginBottom: 18, lineHeight: 20 },
-    sectionLabel: {
-        fontSize: 11,
-        fontWeight: '800',
-        color: '#6b7280',
-        textTransform: 'uppercase',
-        letterSpacing: 0.5,
-        marginTop: 18,
-        marginBottom: 8,
-    },
-    btnRow: { flexDirection: 'row', gap: 10 },
-    btnHalf: { flex: 1 },
-    primaryBtn: {
-        backgroundColor: '#111827',
-        borderRadius: 16,
-        paddingVertical: 16,
-        alignItems: 'center',
-    },
-    primaryBtnText: { color: '#ffffff', fontSize: 16, fontWeight: '700' },
-    secondaryBtn: {
-        backgroundColor: '#2563eb',
-        borderRadius: 16,
-        paddingVertical: 16,
-        alignItems: 'center',
-    },
-    secondaryBtnText: { color: '#ffffff', fontSize: 16, fontWeight: '700' },
-    previewBox: {
-        backgroundColor: '#ffffff',
-        borderWidth: 1,
-        borderColor: '#e5e7eb',
-        borderRadius: 16,
-        padding: 12,
-        alignItems: 'center',
-    },
+    chipText: { fontSize: 11, fontWeight: '800', color: colors.success },
+    btnRow: { flexDirection: 'row', gap: spacing.md },
+    half: { flex: 1 },
     preview: {
         width: '100%',
-        height: 220,
-        borderRadius: 12,
-        backgroundColor: '#f3f4f6',
+        height: 210,
+        borderRadius: radius.md,
+        backgroundColor: colors.surfaceAlt,
     },
-    retake: { marginTop: 10, color: '#6b7280', fontSize: 13, fontWeight: '600' },
-    submitBtn: {
-        backgroundColor: '#16a34a',
-        borderRadius: 16,
-        paddingVertical: 16,
+    changeBtn: {
+        flexDirection: 'row',
         alignItems: 'center',
-        marginTop: 28,
+        justifyContent: 'center',
+        gap: 6,
+        marginTop: spacing.md,
     },
-    btnDisabled: { opacity: 0.5 },
-    submitBtnText: { color: '#ffffff', fontSize: 16, fontWeight: '700' },
-    rejectionBox: {
-        backgroundColor: '#fee2e2',
-        borderColor: '#fecaca',
-        borderWidth: 1,
-        borderRadius: 12,
-        padding: 12,
-        marginBottom: 16,
-    },
-    rejectionTitle: { color: '#991b1b', fontWeight: '800', fontSize: 14, marginBottom: 4 },
-    rejectionText: { color: '#7f1d1d', fontSize: 13 },
-    rejectionHint: { color: '#991b1b', fontSize: 12, marginTop: 6, fontWeight: '600' },
+    changeText: { color: colors.textMuted, fontSize: 13, fontWeight: '700' },
 });

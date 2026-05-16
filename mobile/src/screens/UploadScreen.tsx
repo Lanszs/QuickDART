@@ -1,17 +1,12 @@
 import React, { useState } from 'react';
-import {
-    ActivityIndicator,
-    Alert,
-    Platform,
-    Pressable,
-    StyleSheet,
-    Text,
-    View,
-} from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, Text, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { analyzeFile } from '../api';
+import { signOut } from '../lib/supabase';
 import type { RootStackParamList } from '../navigation';
+import { ActionTile, AppHeader, Card, Screen, SectionLabel } from '../components/ui';
+import { colors, spacing, typography } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Upload'>;
 
@@ -54,9 +49,7 @@ export default function UploadScreen({ navigation }: Props) {
             quality: 0.9,
             videoMaxDuration: 30,
         });
-        if (!res.canceled && res.assets?.[0]) {
-            await handleAsset(res.assets[0]);
-        }
+        if (!res.canceled && res.assets?.[0]) await handleAsset(res.assets[0]);
     };
 
     const openCamera = async (mediaTypes: ImagePicker.MediaType[]) => {
@@ -70,144 +63,79 @@ export default function UploadScreen({ navigation }: Props) {
             quality: 0.9,
             videoMaxDuration: 30,
         });
-        if (!res.canceled && res.assets?.[0]) {
-            await handleAsset(res.assets[0]);
-        }
+        if (!res.canceled && res.assets?.[0]) await handleAsset(res.assets[0]);
+    };
+
+    const onSignOut = async () => {
+        await signOut();
+        navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
     };
 
     return (
-        <View style={styles.container}>
-            <View style={styles.header}>
-                <Text style={styles.brand}>
-                    QuickDART <Text style={styles.brandAccent}>Public</Text>
-                </Text>
-            </View>
-
-            <View style={styles.body}>
-                <Text style={styles.title}>Report an Incident</Text>
-                <Text style={styles.subtitle}>
-                    Help emergency responders by uploading a photo or video.
-                </Text>
-
+        <View style={styles.flex}>
+            <AppHeader subtitle="Report an incident" onSignOut={onSignOut} />
+            <Screen scroll>
                 {busy ? (
-                    <View style={styles.busyBox}>
-                        <ActivityIndicator size="large" color="#2563eb" />
+                    <Card style={styles.busyCard}>
+                        <ActivityIndicator size="large" color={colors.primary} />
                         <Text style={styles.busyText}>Analyzing media…</Text>
-                        <Text style={styles.busySubtext}>
-                            Videos take longer (10 frames analyzed).
-                        </Text>
-                    </View>
+                        <Text style={styles.busySub}>Videos take longer — 10 frames are analyzed.</Text>
+                    </Card>
                 ) : (
                     <>
-                        <Text style={styles.sectionLabel}>Use Camera</Text>
-                        <View style={styles.btnRow}>
-                            <Pressable style={[styles.primaryBtn, styles.btnHalf]} onPress={() => openCamera(['images'])}>
-                                <Text style={styles.primaryBtnText}>Take Photo</Text>
-                            </Pressable>
-                            <Pressable style={[styles.primaryBtn, styles.btnHalf]} onPress={() => openCamera(['videos'])}>
-                                <Text style={styles.primaryBtnText}>Record Video</Text>
-                            </Pressable>
-                        </View>
+                        <Text style={styles.title}>What did you see?</Text>
+                        <Text style={styles.subtitle}>
+                            Capture or attach a photo or video of the scene. Our AI assesses the
+                            disaster type and damage automatically.
+                        </Text>
 
-                        <View style={styles.dividerRow}>
-                            <View style={styles.divider} />
-                            <Text style={styles.dividerText}>OR</Text>
-                            <View style={styles.divider} />
-                        </View>
+                        <SectionLabel>Capture now</SectionLabel>
+                        <ActionTile
+                            icon="camera"
+                            title="Take a photo"
+                            subtitle="Use your camera to snap the scene"
+                            onPress={() => openCamera(['images'])}
+                            accent
+                        />
+                        <ActionTile
+                            icon="videocam"
+                            title="Record a video"
+                            subtitle="Up to 30 seconds of footage"
+                            onPress={() => openCamera(['videos'])}
+                        />
 
-                        <Text style={styles.sectionLabel}>Choose from Gallery</Text>
-                        <View style={styles.btnRow}>
-                            <Pressable style={[styles.secondaryBtn, styles.btnHalf]} onPress={() => pickFromGallery(['images'])}>
-                                <Text style={styles.secondaryBtnText}>Photo</Text>
-                            </Pressable>
-                            <Pressable style={[styles.secondaryBtn, styles.btnHalf]} onPress={() => pickFromGallery(['videos'])}>
-                                <Text style={styles.secondaryBtnText}>Video</Text>
-                            </Pressable>
+                        <View style={{ height: spacing.lg }} />
+                        <SectionLabel>From your device</SectionLabel>
+                        <ActionTile
+                            icon="image"
+                            title="Choose a photo"
+                            subtitle="Pick an existing image"
+                            onPress={() => pickFromGallery(['images'])}
+                        />
+                        <ActionTile
+                            icon="film"
+                            title="Choose a video"
+                            subtitle="Pick an existing clip"
+                            onPress={() => pickFromGallery(['videos'])}
+                        />
+
+                        <View style={styles.footerRow}>
+                            <Text style={styles.footer}>Reports are linked to your verified account.</Text>
                         </View>
                     </>
                 )}
-            </View>
-
-            <Text style={styles.footer}>
-                Anonymous report — no login required.
-                {Platform.OS === 'android' ? '\nMake sure the backend is reachable on your network.' : ''}
-            </Text>
+            </Screen>
         </View>
     );
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#f9fafb' },
-    header: {
-        backgroundColor: '#ffffff',
-        paddingHorizontal: 16,
-        paddingVertical: 14,
-        borderBottomWidth: 1,
-        borderBottomColor: '#e5e7eb',
-    },
-    brand: { fontSize: 18, fontWeight: '800', color: '#1f2937' },
-    brandAccent: { color: '#2563eb' },
-    body: { flex: 1, padding: 24, justifyContent: 'center' },
-    title: { fontSize: 24, fontWeight: '700', color: '#111827', textAlign: 'center' },
-    subtitle: {
-        fontSize: 14,
-        color: '#6b7280',
-        textAlign: 'center',
-        marginTop: 6,
-        marginBottom: 32,
-    },
-    primaryBtn: {
-        backgroundColor: '#111827',
-        borderRadius: 16,
-        paddingVertical: 16,
-        alignItems: 'center',
-        shadowColor: '#000',
-        shadowOpacity: 0.15,
-        shadowRadius: 6,
-        shadowOffset: { width: 0, height: 2 },
-        elevation: 3,
-    },
-    primaryBtnText: { color: '#ffffff', fontSize: 16, fontWeight: '700' },
-    dividerRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginVertical: 18,
-        gap: 12,
-    },
-    divider: { flex: 1, height: 1, backgroundColor: '#e5e7eb' },
-    dividerText: { color: '#9ca3af', fontSize: 12, fontWeight: '700' },
-    secondaryBtn: {
-        backgroundColor: '#2563eb',
-        borderRadius: 16,
-        paddingVertical: 16,
-        alignItems: 'center',
-    },
-    secondaryBtnText: { color: '#ffffff', fontSize: 16, fontWeight: '700' },
-    sectionLabel: {
-        fontSize: 11,
-        fontWeight: '800',
-        color: '#6b7280',
-        textTransform: 'uppercase',
-        letterSpacing: 0.5,
-        marginBottom: 8,
-    },
-    btnRow: { flexDirection: 'row', gap: 10 },
-    btnHalf: { flex: 1 },
-    busyBox: {
-        backgroundColor: '#ffffff',
-        borderRadius: 16,
-        paddingVertical: 32,
-        alignItems: 'center',
-        borderWidth: 1,
-        borderColor: '#e5e7eb',
-    },
-    busyText: { marginTop: 12, color: '#2563eb', fontWeight: '700', fontSize: 16 },
-    busySubtext: { marginTop: 4, color: '#9ca3af', fontSize: 12 },
-    footer: {
-        textAlign: 'center',
-        color: '#9ca3af',
-        fontSize: 12,
-        paddingHorizontal: 24,
-        paddingBottom: 24,
-    },
+    flex: { flex: 1, backgroundColor: colors.bg },
+    title: { ...typography.display, marginBottom: spacing.xs },
+    subtitle: { ...typography.subtitle, marginBottom: spacing.xxl },
+    busyCard: { alignItems: 'center', paddingVertical: spacing.huge, marginTop: spacing.huge },
+    busyText: { marginTop: spacing.lg, color: colors.text, fontWeight: '800', fontSize: 17 },
+    busySub: { marginTop: spacing.xs, color: colors.textMuted, fontSize: 13 },
+    footerRow: { marginTop: spacing.xxl, alignItems: 'center' },
+    footer: { color: colors.textFaint, fontSize: 12.5 },
 });

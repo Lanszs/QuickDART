@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useRef } from 'react';
-import { ActivityIndicator, Alert, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppState, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { fetchVerificationStatus } from '../api';
-import { supabase } from '../lib/supabase';
+import { signOut } from '../lib/supabase';
 import type { RootStackParamList } from '../navigation';
+import { AppHeader, Button, Card, IconBadge, Screen } from '../components/ui';
+import { colors, spacing, typography } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'VerificationPending'>;
 
@@ -41,53 +43,49 @@ export default function VerificationPendingScreen({ navigation, route }: Props) 
     }, [poll]);
 
     const onSignOut = async () => {
-        await supabase.auth.signOut();
+        await signOut();
         navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
     };
 
     return (
-        <View style={styles.container}>
-            <View style={styles.card}>
-                <ActivityIndicator size="large" color="#d97706" />
+        <View style={styles.flex}>
+            <AppHeader subtitle="Verification pending" onSignOut={onSignOut} />
+            <Screen contentStyle={styles.center}>
+                <IconBadge icon="hourglass-outline" tone="warning" />
                 <Text style={styles.title}>Awaiting review</Text>
-                <Text style={styles.subtitle}>
+                <Text style={styles.body}>
                     Your ID and selfie were submitted
-                    {submittedAt ? ` on ${new Date(submittedAt).toLocaleString()}` : ''}.
-                    A Commander will review them shortly. This screen will update
-                    automatically once a decision is made.
+                    {submittedAt ? ` on ${new Date(submittedAt).toLocaleString()}` : ''}. A commander
+                    will review them shortly — this screen updates automatically once a decision is made.
                 </Text>
-                <Pressable onPress={poll} style={styles.refreshBtn}>
-                    <Text style={styles.refreshBtnText}>Check now</Text>
-                </Pressable>
-                <Pressable onPress={onSignOut}>
-                    <Text style={styles.signOut}>Sign out</Text>
-                </Pressable>
-            </View>
+
+                <Card style={styles.statusCard}>
+                    <View style={styles.statusRow}>
+                        <View style={styles.dotLive} />
+                        <Text style={styles.statusText}>Checking for updates every 10 seconds</Text>
+                    </View>
+                </Card>
+
+                <Button
+                    title="Check now"
+                    icon="refresh"
+                    variant="secondary"
+                    onPress={poll}
+                    style={styles.btn}
+                />
+            </Screen>
         </View>
     );
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#f9fafb', justifyContent: 'center', alignItems: 'center', padding: 24 },
-    card: {
-        backgroundColor: '#ffffff',
-        borderRadius: 20,
-        padding: 28,
-        alignItems: 'center',
-        borderWidth: 1,
-        borderColor: '#e5e7eb',
-        width: '100%',
-        maxWidth: 420,
-    },
-    title: { fontSize: 22, fontWeight: '800', color: '#111827', marginTop: 16 },
-    subtitle: { fontSize: 14, color: '#6b7280', textAlign: 'center', marginTop: 8, lineHeight: 20 },
-    refreshBtn: {
-        marginTop: 20,
-        backgroundColor: '#2563eb',
-        paddingVertical: 12,
-        paddingHorizontal: 24,
-        borderRadius: 12,
-    },
-    refreshBtnText: { color: '#ffffff', fontWeight: '700' },
-    signOut: { marginTop: 16, color: '#6b7280', fontSize: 13, fontWeight: '600' },
+    flex: { flex: 1, backgroundColor: colors.bg },
+    center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+    title: { ...typography.display },
+    body: { ...typography.subtitle, textAlign: 'center', marginTop: spacing.sm },
+    statusCard: { marginTop: spacing.xxl, width: '100%' },
+    statusRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, justifyContent: 'center' },
+    dotLive: { width: 9, height: 9, borderRadius: 5, backgroundColor: colors.success },
+    statusText: { fontSize: 13, color: colors.textMuted, fontWeight: '600' },
+    btn: { marginTop: spacing.xl, alignSelf: 'stretch' },
 });

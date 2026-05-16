@@ -1,9 +1,12 @@
 import React, { useEffect } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { supabase } from '../lib/supabase';
 import { fetchVerificationStatus } from '../api';
 import type { RootStackParamList } from '../navigation';
+import { Brand } from '../components/ui';
+import { gradients, spacing } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AuthLoading'>;
 
@@ -42,14 +45,18 @@ export default function AuthLoadingScreen({ navigation }: Props) {
     }, [navigation]);
 
     return (
-        <View style={styles.container}>
-            <ActivityIndicator size="large" color="#2563eb" />
-            <Text style={styles.text}>Checking your account...</Text>
-        </View>
+        <LinearGradient
+            colors={gradients.brand}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.container}
+        >
+            <Brand size="lg" onDark />
+            <ActivityIndicator size="large" color="#9DC0FF" style={{ marginTop: spacing.xxxl }} />
+        </LinearGradient>
     );
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f9fafb' },
-    text: { marginTop: 12, color: '#6b7280', fontSize: 14, fontWeight: '600' },
+    container: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 });
