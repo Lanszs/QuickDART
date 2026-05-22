@@ -470,13 +470,19 @@ def get_api_status():
     """Endpoint to check if the API is running."""
     return jsonify({"status": "OK", "service": "QuickDART Backend"}), 200
 
-# Placeholder login route
+# Roles allowed to authenticate against the Authorized Personnel login.
+# Civilians authenticate via the separate /api/v1/civilian/* flow and must
+# never receive a session here, even though their Supabase credentials are
+# valid — otherwise they'd land inside the Commander/Responder dashboards.
+ALLOWED_ADMIN_ROLES = {"Commander", "Responder"}
+
+
 @app.route('/api/v1/login', methods=['POST'])
 def login_user():
     """
-    Real database login.
+    Authorized Personnel login. Validates the user exists in the local users
+    table, then enforces a role allowlist so civilian accounts cannot pass.
     """
-    # 1. Get data from the React Frontend
     data = request.get_json()
     user_id = data.get('user_id')
     password = data.get('password')
@@ -484,29 +490,33 @@ def login_user():
     if not user_id or not password:
         return jsonify({"message": "Missing credentials", "status": "failed"}), 400
 
-# 2. Check Supabase Database
-    # This calls the function in models/user.py that queries your new DB
     role = authenticate_user(user_id, password)
 
-    if role:
-        # Get Team ID
-        session = SessionLocal()
-        from models.user import User
-        user_obj = session.query(User).filter(User.agency_id == user_id).first()
-        team_id = user_obj.team_id if user_obj else None
-        session.close()
-
-        # 3. Success! Return the role and a token
-        return jsonify({
-            "status": "authenticated",
-            "token": "mock_jwt_token_123", # In the future, we can make this a real JWT
-            "role": role,
-            "user_id": user_id,
-            "team_id": team_id
-        }), 200
-    else:
-        # 4. Failure
+    if not role:
         return jsonify({"message": "Invalid credentials. Please check your Agency ID and Password.", "status": "failed"}), 401
+
+    if role == "Civilian":
+        return jsonify({
+            "status": "civilian_account",
+            "message": "This is a civilian account. Please use the Civilian Portal."
+        }), 403
+
+    if role not in ALLOWED_ADMIN_ROLES:
+        return jsonify({"status": "forbidden", "message": "Account not authorized."}), 403
+
+    session = SessionLocal()
+    from models.user import User
+    user_obj = session.query(User).filter(User.agency_id == user_id).first()
+    team_id = user_obj.team_id if user_obj else None
+    session.close()
+
+    return jsonify({
+        "status": "authenticated",
+        "token": "mock_jwt_token_123",
+        "role": role,
+        "user_id": user_id,
+        "team_id": team_id
+    }), 200
     
 
 # --- TEAM MANAGEMENT ROUTES ---

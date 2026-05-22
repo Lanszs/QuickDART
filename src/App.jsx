@@ -86,51 +86,64 @@ const WelcomeScreen = ({ onSelectMode }) => (
   </div>
 );
 
-const Login = ({ onLoginSuccess }) => {
+const Login = ({ onLoginSuccess, onCivilianRedirect }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  // { kind: 'civilian' | 'denied' | 'generic', message: string } | null
+  const [error, setError] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError('');
+    setError(null);
     setIsSubmitting(true);
 
     try {
-      // 1. SUPABASE LOGIN
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const { data, error: supabaseError } = await supabase.auth.signInWithPassword({
         email: email,
         password: password,
       });
 
-      if (error) throw error;
+      if (supabaseError) throw supabaseError;
 
-      // 2. DETERMINE ROLE
       const localAuthResponse = await fetch(`${API_URL}/api/v1/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ user_id: email, password: "managed_by_supabase" })
       });
-      
-      // Fallback: If local auth fails (maybe old admin account has diff password), just infer role
-      let teamId = null;
-      let userRole = email.includes('admin') ? 'Commander' : 'Responder';
 
-      if (localAuthResponse.ok) {
-          const userData = await localAuthResponse.json();
-          teamId = userData.team_id;
-          userRole = userData.role;
-      } else {
-          // Try the admin route manually if local fail
-          if(email === 'sysadmin@quickdart.com') userRole = 'Commander';
+      if (localAuthResponse.status === 403) {
+        const body = await localAuthResponse.json().catch(() => ({}));
+        await supabase.auth.signOut();
+        if (body.status === 'civilian_account') {
+          setError({
+            kind: 'civilian',
+            message: body.message || 'This is a civilian account. Please use the Civilian Portal.',
+          });
+        } else {
+          setError({ kind: 'denied', message: body.message || 'Account not authorized.' });
+        }
+        return;
       }
 
-      onLoginSuccess(data.session, userRole, teamId);
+      if (!localAuthResponse.ok) {
+        await supabase.auth.signOut();
+        setError({ kind: 'generic', message: 'Authentication failed. Please try again.' });
+        return;
+      }
+
+      const userData = await localAuthResponse.json();
+      if (!['Commander', 'Responder'].includes(userData.role)) {
+        await supabase.auth.signOut();
+        setError({ kind: 'denied', message: 'Account not authorized.' });
+        return;
+      }
+
+      onLoginSuccess(data.session, userData.role, userData.team_id);
 
     } catch (err) {
       console.error('Login Error:', err.message);
-      setError('Authentication failed. Please check your email and password.');
+      setError({ kind: 'generic', message: 'Authentication failed. Please check your email and password.' });
     } finally {
       setIsSubmitting(false);
     }
@@ -142,7 +155,16 @@ const Login = ({ onLoginSuccess }) => {
       <form onSubmit={handleSubmit}>
         {error && (
           <div className="p-3 mb-4 text-sm font-medium text-red-800 bg-red-100 border border-red-300 rounded-lg">
-            {error}
+            <div>{error.message}</div>
+            {error.kind === 'civilian' && onCivilianRedirect && (
+              <button
+                type="button"
+                onClick={onCivilianRedirect}
+                className="mt-2 underline text-red-700 font-semibold"
+              >
+                Open Civilian Portal →
+              </button>
+            )}
           </div>
         )}
         <div className="mb-4">
@@ -244,14 +266,16 @@ const App = () => {
     <div className="flex flex-col min-h-screen font-sans bg-gray-50">
       {!isLoggedIn && <Header onBack={() => setAppMode('welcome')} />}
       <main className="flex-grow flex items-start justify-center">
-        {isLoggedIn ? (
-          role === 'Responder' ? (
-            <ResponderDashboard userRole={role} onLogout={handleLogout} />
-          ) : (
-            <Dashboard userRole={role} onLogout={handleLogout} />
-          )
+        {isLoggedIn && role === 'Responder' ? (
+          <ResponderDashboard userRole={role} onLogout={handleLogout} />
+        ) : isLoggedIn && role === 'Commander' ? (
+          <Dashboard userRole={role} onLogout={handleLogout} />
         ) : (
-          <Login onLoginSuccess={handleLoginSuccess} />
+          // Unknown/unauthorized role falls through to the login screen.
+          <Login
+            onLoginSuccess={handleLoginSuccess}
+            onCivilianRedirect={() => setAppMode('guest')}
+          />
         )}
       </main>
       {!isLoggedIn && <Footer />}
