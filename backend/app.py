@@ -1579,24 +1579,27 @@ _last_live_analysis = {}  # Per-client throttle: {sid: timestamp}
 def handle_live_frame(data):
     """
     Receives a base64-encoded JPEG frame from the browser.
-    Runs both models + Grad-CAM and emits bounding box results back.
+    Runs the type + damage models only (no Grad-CAM) and emits a coarse
+    centered bbox. Precise Grad-CAM bboxes are produced on the REST
+    /api/v1/analyze path used by the snapshot/save flow.
     `data['view']` selects the model bundle: 'aerial' (default for live drone) or 'ground'.
     """
     from flask import request as flask_request
     sid = flask_request.sid
 
-    # Throttle: skip if last analysis was < 500ms ago
+    # Throttle: skip if last analysis was < 250ms ago. Without Grad-CAM the
+    # handler can comfortably keep up at this cadence on CPU.
     now = _time.time()
-    if sid in _last_live_analysis and (now - _last_live_analysis[sid]) < 0.5:
+    if sid in _last_live_analysis and (now - _last_live_analysis[sid]) < 0.25:
         return
     _last_live_analysis[sid] = now
 
     # Live feed defaults to aerial (drone perspective) but client can override
     view = (data.get('view') or 'aerial').lower()
-    type_model, damage_models, type_gradcam, damage_gradcams = get_models_for_view(view)
+    type_model, damage_models, _type_gradcam, _damage_gradcams = get_models_for_view(view)
 
     if not type_model:
-        emit('live_frame_result', {'error': 'Type model not loaded'})
+        emit('live_frame_result', {'error': 'Type model not loaded', 'frame_id': data.get('frame_id')})
         return
 
     try:
@@ -1633,51 +1636,27 @@ def handle_live_frame(data):
                 detected_damage = "No Damage"
                 damage_conf_val = 0.0
 
-        # Compute Grad-CAM bounding boxes
-        gradcam_data = {}
-        if is_no_disaster:
-            if type_gradcam:
-                try:
-                    type_heatmap, _ = type_gradcam.compute_heatmap(tensor)
-                    from gradcam import heatmap_to_bbox
-                    import numpy as np
-                    gradcam_data = {
-                        "type_bbox": heatmap_to_bbox(type_heatmap),
-                        "damage_bbox": None,
-                        "damage_bboxes": [],
-                        "type_heatmap": np.round(type_heatmap, 3).tolist(),
-                        "damage_heatmap": None
-                    }
-                except Exception as e:
-                    print(f"[Live Grad-CAM] Error: {e}", flush=True)
-        elif type_gradcam:
-            frame_damage_gradcam = damage_gradcams.get(detected_type)
-            if frame_damage_gradcam:
-                try:
-                    frame_damage_model = damage_models.get(detected_type)
-                    gradcam_data = compute_gradcam_for_frame(
-                        type_model, frame_damage_model, tensor,
-                        type_gradcam, frame_damage_gradcam
-                    )
-                except Exception as e:
-                    print(f"[Live Grad-CAM] Error: {e}", flush=True)
+        # Coarse centered bbox for live preview. Disappears on "No Disaster".
+        # Precise Grad-CAM bbox is computed only on the snapshot/save path.
+        coarse_bbox = None if is_no_disaster else {"x": 0.1, "y": 0.1, "w": 0.8, "h": 0.8}
 
         emit('live_frame_result', {
             'type': detected_type,
             'type_confidence': round(type_conf.item() * 100, 2),
             'damage': detected_damage,
             'damage_confidence': damage_conf_val,
-            'type_bbox': gradcam_data.get('type_bbox'),
-            'damage_bbox': gradcam_data.get('damage_bbox'),
-            'damage_bboxes': gradcam_data.get('damage_bboxes', []),
+            'type_bbox': coarse_bbox,
+            'damage_bbox': coarse_bbox,
+            'damage_bboxes': [],
             'frame_width': image.width,
             'frame_height': image.height,
-            'timestamp': data.get('timestamp')
+            'timestamp': data.get('timestamp'),
+            'frame_id': data.get('frame_id'),
         })
 
     except Exception as e:
         print(f"[Live Analysis] Error: {e}", flush=True)
-        emit('live_frame_result', {'error': str(e)})
+        emit('live_frame_result', {'error': str(e), 'frame_id': data.get('frame_id')})
 
 @socketio.on('disconnect')
 def handle_disconnect():

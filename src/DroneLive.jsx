@@ -29,6 +29,9 @@ const DroneLive = ({ myTeam, currentTeamId, onReportSaved }) => {
     const videoRef = useRef(null);
     const overlayRef = useRef(null);
     const intervalRef = useRef(null);
+    const frameIdRef = useRef(0);
+    const lastAcceptedIdRef = useRef(0);
+    const lastResultAtRef = useRef(0);
 
     const teamBase = (myTeam?.base_latitude && myTeam?.base_longitude)
         ? [parseFloat(myTeam.base_latitude), parseFloat(myTeam.base_longitude)]
@@ -80,24 +83,30 @@ const DroneLive = ({ myTeam, currentTeamId, onReportSaved }) => {
         }
         setStreaming(false);
         setLiveResult(null);
+        frameIdRef.current = 0;
+        lastAcceptedIdRef.current = 0;
+        lastResultAtRef.current = 0;
     }, [stream]);
 
     useEffect(() => () => stopStream(), []); // eslint-disable-line
 
-    // Send frames every 500ms
+    // Send frames every 300ms, downscaled to ~320px wide to keep upload tiny.
     useEffect(() => {
         if (!streaming) return;
+        const SEND_W = 320;
         const t = setTimeout(() => {
             intervalRef.current = setInterval(() => {
                 const v = videoRef.current;
-                if (!v || v.readyState < 2) return;
+                if (!v || v.readyState < 2 || !v.videoWidth) return;
+                const scale = SEND_W / v.videoWidth;
                 const canvas = document.createElement('canvas');
-                canvas.width = v.videoWidth;
-                canvas.height = v.videoHeight;
-                canvas.getContext('2d').drawImage(v, 0, 0);
-                const data = canvas.toDataURL('image/jpeg', 0.5);
-                socket.emit('analyze_live_frame', { frame: data, view: 'aerial' });
-            }, 500);
+                canvas.width = SEND_W;
+                canvas.height = Math.round(v.videoHeight * scale);
+                canvas.getContext('2d').drawImage(v, 0, 0, canvas.width, canvas.height);
+                const data = canvas.toDataURL('image/jpeg', 0.6);
+                const frameId = ++frameIdRef.current;
+                socket.emit('analyze_live_frame', { frame: data, view: 'aerial', frame_id: frameId });
+            }, 300);
         }, 400);
         return () => {
             clearTimeout(t);
@@ -144,10 +153,31 @@ const DroneLive = ({ myTeam, currentTeamId, onReportSaved }) => {
     }, []);
 
     useEffect(() => {
-        const handler = (data) => { setLiveResult(data); drawOverlay(data); };
+        const handler = (data) => {
+            // Drop responses that arrive out-of-order — a newer frame already won.
+            if (data?.frame_id && data.frame_id < lastAcceptedIdRef.current) return;
+            if (data?.frame_id) lastAcceptedIdRef.current = data.frame_id;
+            lastResultAtRef.current = Date.now();
+            setLiveResult(data);
+            drawOverlay(data);
+        };
         socket.on('live_frame_result', handler);
         return () => socket.off('live_frame_result', handler);
     }, [drawOverlay]);
+
+    // Stale watchdog: clear bbox/badge if the pipeline stalls (>1.5s with no result)
+    // so the user never sees a frozen "No Disaster" after the scene has changed.
+    useEffect(() => {
+        if (!streaming) return;
+        const t = setInterval(() => {
+            if (lastResultAtRef.current && Date.now() - lastResultAtRef.current > 1500) {
+                setLiveResult(null);
+                drawOverlay(null);
+                lastResultAtRef.current = 0;
+            }
+        }, 500);
+        return () => clearInterval(t);
+    }, [streaming, drawOverlay]);
 
     const captureSnapshotReport = async () => {
         if (!liveResult || !videoRef.current) return;

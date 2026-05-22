@@ -43,6 +43,10 @@ const GuestDashboard = ({ onBack }) => {
     const liveIntervalRef = useRef(null);
     const resultCanvasRef = useRef(null);
     const resultImageRef = useRef(null);
+    const liveFrameIdRef = useRef(0);
+    const liveLastAcceptedIdRef = useRef(0);
+    const liveLastResultAtRef = useRef(0);
+    const liveWatchdogRef = useRef(null);
 
     const isCameraSupported = !!(navigator.mediaDevices?.getUserMedia);
 
@@ -329,20 +333,26 @@ const GuestDashboard = ({ onBack }) => {
     };
 
     // --- LIVE ANALYSIS: stream frames to backend ---
+    // Downscale to ~320px wide and tick every 300ms so the deployed CPU backend
+    // can keep up; each frame carries a monotonically-increasing id so we can
+    // drop out-of-order responses.
     const startLiveStreaming = useCallback(() => {
         if (liveIntervalRef.current) return;
+        const SEND_W = 320;
         liveIntervalRef.current = setInterval(() => {
             const video = cameraVideoRef.current;
-            if (!video || video.readyState < 2) return;
+            if (!video || video.readyState < 2 || !video.videoWidth) return;
 
+            const scale = SEND_W / video.videoWidth;
             const canvas = document.createElement('canvas');
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
+            canvas.width = SEND_W;
+            canvas.height = Math.round(video.videoHeight * scale);
             const ctx = canvas.getContext('2d');
-            ctx.drawImage(video, 0, 0);
-            const base64Data = canvas.toDataURL('image/jpeg', 0.5);
-            socket.emit('analyze_live_frame', { frame: base64Data });
-        }, 500);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const base64Data = canvas.toDataURL('image/jpeg', 0.6);
+            const frameId = ++liveFrameIdRef.current;
+            socket.emit('analyze_live_frame', { frame: base64Data, frame_id: frameId });
+        }, 300);
     }, []);
 
     const stopLiveStreaming = useCallback(() => {
@@ -350,6 +360,13 @@ const GuestDashboard = ({ onBack }) => {
             clearInterval(liveIntervalRef.current);
             liveIntervalRef.current = null;
         }
+        if (liveWatchdogRef.current) {
+            clearInterval(liveWatchdogRef.current);
+            liveWatchdogRef.current = null;
+        }
+        liveFrameIdRef.current = 0;
+        liveLastAcceptedIdRef.current = 0;
+        liveLastResultAtRef.current = 0;
         setLiveResult(null);
     }, []);
 
@@ -406,12 +423,35 @@ const GuestDashboard = ({ onBack }) => {
     // Socket listener for live frame results
     useEffect(() => {
         const handleLiveResult = (data) => {
+            // Drop out-of-order responses — a newer frame already won.
+            if (data?.frame_id && data.frame_id < liveLastAcceptedIdRef.current) return;
+            if (data?.frame_id) liveLastAcceptedIdRef.current = data.frame_id;
+            liveLastResultAtRef.current = Date.now();
             setLiveResult(data);
             drawLiveOverlay(data);
         };
         socket.on('live_frame_result', handleLiveResult);
         return () => socket.off('live_frame_result', handleLiveResult);
     }, [drawLiveOverlay]);
+
+    // Stale watchdog: clear bbox/badge when no fresh result has arrived in 1.5s,
+    // so a frozen "No Disaster" never lingers after the scene has changed.
+    useEffect(() => {
+        if (!showCamera) return;
+        liveWatchdogRef.current = setInterval(() => {
+            if (liveLastResultAtRef.current && Date.now() - liveLastResultAtRef.current > 1500) {
+                setLiveResult(null);
+                drawLiveOverlay(null);
+                liveLastResultAtRef.current = 0;
+            }
+        }, 500);
+        return () => {
+            if (liveWatchdogRef.current) {
+                clearInterval(liveWatchdogRef.current);
+                liveWatchdogRef.current = null;
+            }
+        };
+    }, [showCamera, drawLiveOverlay]);
 
     // Draw bboxes on the after-capture result preview
     const drawResultBboxes = useCallback(() => {
