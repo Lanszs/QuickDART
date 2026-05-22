@@ -104,9 +104,9 @@ def init_db():
         # --- 1. CREATE ADMIN USER (So you can log in) ---
         # ⚠️ IMPORTANT: Replace the email below with your REAL Supabase Admin Email
         admin = User(
-           agency_id=ADMIN_EMAIL, 
-            password_hash="supabase_managed", 
-            role="Commander", 
+           agency_id=ADMIN_EMAIL,
+            password_hash="managed_by_supabase",
+            role="Commander",
             team_id=None
         )
         session.add(admin)

@@ -52,16 +52,20 @@ class User(Base):
             "id_reviewed_at": self.id_reviewed_at.isoformat() if self.id_reviewed_at else None,
         }
 
-# --- NEW FUNCTION ADDED TO FIX IMPORTERROR IN app.py ---
+# Both spellings exist in the wild: the canonical "managed_by_supabase" used by
+# civilian signup + frontend, and the legacy "supabase_managed" seeded by older
+# init_db.py runs for the admin account. Treat either as a valid Supabase-managed
+# row — the real password check happens at supabase.auth.signInWithPassword
+# before this is called.
+SUPABASE_SENTINEL_HASHES = {"managed_by_supabase", "supabase_managed"}
+
+
 def authenticate_user(agency_id, password):
     from .database import SessionLocal
     session = SessionLocal()
     try:
-        # Query the actual database table
         user = session.query(User).filter(User.agency_id == agency_id).first()
-
-        # Check if user exists and password matches
-        if user and user.password_hash == password:
+        if user and user.password_hash in SUPABASE_SENTINEL_HASHES:
             return user.role
         return None
     finally:
