@@ -15,5 +15,7 @@ export type RootStackParamList = {
     Success: {
         disasterType: string;
         damageLevel: string;
+        mediaUrl?: string;
+        isVideo?: boolean;
     };
 };

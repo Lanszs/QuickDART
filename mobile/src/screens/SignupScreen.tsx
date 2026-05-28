@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { supabase } from '../lib/supabase';
-import { civilianSignup } from '../api';
+import { civilianSignup, NonCivilianAccountError } from '../api';
 import type { RootStackParamList } from '../navigation';
 import { AuthHero, Button, Card, Field, Notice } from '../components/ui';
 import { colors, spacing } from '../theme';
@@ -37,10 +37,15 @@ export default function SignupScreen({ navigation }: Props) {
             if (signInError) throw signInError;
             navigation.reset({ index: 0, routes: [{ name: 'IdVerification' }] });
         } catch (e: any) {
-            const code = String(e?.message ?? 'unknown_error');
-            if (code === 'email_already_registered') setError('That email is already registered. Try logging in instead.');
-            else if (code === 'password_too_short') setError('Password must be at least 8 characters.');
-            else setError(code);
+            if (e instanceof NonCivilianAccountError) {
+                await supabase.auth.signOut();
+                setError(e.message);
+            } else {
+                const code = String(e?.message ?? 'unknown_error');
+                if (code === 'email_already_registered') setError('That email is already registered. Try logging in instead.');
+                else if (code === 'password_too_short') setError('Password must be at least 8 characters.');
+                else setError(code);
+            }
         } finally {
             setBusy(false);
         }

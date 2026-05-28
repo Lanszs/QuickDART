@@ -2005,6 +2005,8 @@ def civilian_signup():
     session = SessionLocal()
     try:
         existing = session.query(User).filter(User.agency_id == email).first()
+        if existing and existing.role and existing.role != "Civilian":
+            return jsonify(NON_CIVILIAN_ACCOUNT_RESPONSE), 403
         if existing:
             existing.role = existing.role or "Civilian"
             existing.full_name = full_name or existing.full_name
@@ -2028,10 +2030,19 @@ def civilian_signup():
         session.close()
 
 
+NON_CIVILIAN_ACCOUNT_RESPONSE = {
+    "status": "non_civilian_account",
+    "message": "This account is registered for Authorized Personnel. "
+               "Please use the Authorized Personnel login.",
+}
+
+
 @app.route('/api/v1/civilian/verification', methods=['GET'])
 @require_supabase_user
 def civilian_verification_status():
     user = g.current_user
+    if user.role != "Civilian":
+        return jsonify(NON_CIVILIAN_ACCOUNT_RESPONSE), 403
     return jsonify({
         "status": user.id_verification_status,
         "rejection_reason": user.id_rejection_reason,
@@ -2046,6 +2057,8 @@ def civilian_verification_status():
 def civilian_verification_submit():
     """Multipart upload: fields `id_document` and `selfie` (both required)."""
     user = g.current_user
+    if user.role != "Civilian":
+        return jsonify(NON_CIVILIAN_ACCOUNT_RESPONSE), 403
     if user.id_verification_status == "approved":
         return jsonify({"error": "already_approved"}), 400
 

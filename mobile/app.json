@@ -55,7 +55,8 @@
           "locationAlwaysAndWhenInUsePermission": "QuickDART uses your location to tag disaster reports."
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-video"
     ],
     "extra": {
       "eas": {

@@ -10,7 +10,7 @@ import {
 
 // --- Auth screen (toggle Login / Signup) ----------------------------------
 
-const AuthPanel = ({ onAuthed, onBack }) => {
+const AuthPanel = ({ onAuthed, onBack, externalError, clearExternalError }) => {
   const [mode, setMode] = useState('login'); // 'login' | 'signup'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -18,9 +18,12 @@ const AuthPanel = ({ onAuthed, onBack }) => {
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  const visibleError = error || externalError || '';
+
   const submit = async (e) => {
     e.preventDefault();
     setError('');
+    clearExternalError?.();
     setSubmitting(true);
     try {
       if (mode === 'signup') {
@@ -31,6 +34,9 @@ const AuthPanel = ({ onAuthed, onBack }) => {
         });
         if (!r.ok) {
           const body = await r.json().catch(() => ({}));
+          if (r.status === 403 && body.status === 'non_civilian_account') {
+            throw new Error(body.message || 'This email is registered for Authorized Personnel.');
+          }
           throw new Error(body.error || 'signup_failed');
         }
       }
@@ -69,9 +75,9 @@ const AuthPanel = ({ onAuthed, onBack }) => {
           </p>
 
           <form onSubmit={submit}>
-            {error && (
+            {visibleError && (
               <div className="p-3 mb-4 text-sm font-medium text-red-800 bg-red-100 border border-red-300 rounded-lg">
-                {error}
+                {visibleError}
               </div>
             )}
             {mode === 'signup' && (
@@ -408,6 +414,7 @@ const CivilianApp = ({ onBack }) => {
   const [rejectionReason, setRejectionReason] = useState(null);
   const [submittedAt, setSubmittedAt] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [authError, setAuthError] = useState('');
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -418,6 +425,17 @@ const CivilianApp = ({ onBack }) => {
         return;
       }
       const r = await fetch(`${API_URL}/api/v1/civilian/verification`, { headers });
+      if (r.status === 403) {
+        const body = await r.json().catch(() => ({}));
+        if (body.status === 'non_civilian_account') {
+          await supabase.auth.signOut();
+          setSession(null);
+          setStatus(null);
+          setAuthError(body.message || 'This account is registered for Authorized Personnel.');
+          setLoading(false);
+          return;
+        }
+      }
       if (!r.ok) {
         setStatus('unverified');
         setLoading(false);
@@ -479,13 +497,20 @@ const CivilianApp = ({ onBack }) => {
   }
 
   if (!session) {
-    return <AuthPanel onAuthed={onAuthed} onBack={onBack} />;
+    return (
+      <AuthPanel
+        onAuthed={onAuthed}
+        onBack={onBack}
+        externalError={authError}
+        clearExternalError={() => setAuthError('')}
+      />
+    );
   }
 
   if (status === 'approved') {
     // Back returns to the welcome screen but keeps the session alive so the
     // civilian doesn't have to re-login next time they pick "Public User".
-    return <GuestDashboard onBack={onBack} />;
+    return <GuestDashboard onBack={onBack} onSignOut={onSignOut} />;
   }
 
   if (status === 'pending') {

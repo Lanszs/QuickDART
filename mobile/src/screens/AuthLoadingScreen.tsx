@@ -3,7 +3,7 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { supabase } from '../lib/supabase';
-import { fetchVerificationStatus } from '../api';
+import { fetchVerificationStatus, NonCivilianAccountError } from '../api';
 import type { RootStackParamList } from '../navigation';
 import { Brand } from '../components/ui';
 import { gradients, spacing } from '../theme';
@@ -21,7 +21,18 @@ export default function AuthLoadingScreen({ navigation }: Props) {
                 navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
                 return;
             }
-            const status = await fetchVerificationStatus();
+            let status;
+            try {
+                status = await fetchVerificationStatus();
+            } catch (e) {
+                if (!active) return;
+                if (e instanceof NonCivilianAccountError) {
+                    await supabase.auth.signOut();
+                    navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+                    return;
+                }
+                throw e;
+            }
             if (!active) return;
             if (!status || status.status === 'unverified') {
                 navigation.reset({ index: 0, routes: [{ name: 'IdVerification' }] });

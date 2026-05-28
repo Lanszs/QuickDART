@@ -118,6 +118,17 @@ export type VerificationState = {
     full_name: string | null;
 };
 
+export const NON_CIVILIAN_ACCOUNT_ERROR = 'non_civilian_account';
+const NON_CIVILIAN_DEFAULT_MESSAGE =
+    'This account is registered for Authorized Personnel. Please use the Authorized Personnel login.';
+
+export class NonCivilianAccountError extends Error {
+    code = NON_CIVILIAN_ACCOUNT_ERROR;
+    constructor(message?: string) {
+        super(message || NON_CIVILIAN_DEFAULT_MESSAGE);
+    }
+}
+
 export async function civilianSignup(email: string, password: string, fullName: string): Promise<void> {
     const res = await fetch(`${BACKEND_URL}/api/v1/civilian/signup`, {
         method: 'POST',
@@ -126,6 +137,9 @@ export async function civilianSignup(email: string, password: string, fullName: 
     });
     if (!res.ok) {
         const body = await res.json().catch(() => ({}));
+        if (res.status === 403 && body.status === NON_CIVILIAN_ACCOUNT_ERROR) {
+            throw new NonCivilianAccountError(body.message);
+        }
         throw new Error(body.error || `signup_failed_${res.status}`);
     }
 }
@@ -136,6 +150,12 @@ export async function fetchVerificationStatus(): Promise<VerificationState | nul
     const res = await fetch(`${BACKEND_URL}/api/v1/civilian/verification`, {
         headers: { ...NGROK_HEADER, ...auth },
     });
+    if (res.status === 403) {
+        const body = await res.json().catch(() => ({}));
+        if (body.status === NON_CIVILIAN_ACCOUNT_ERROR) {
+            throw new NonCivilianAccountError(body.message);
+        }
+    }
     if (!res.ok) return null;
     return (await res.json()) as VerificationState;
 }

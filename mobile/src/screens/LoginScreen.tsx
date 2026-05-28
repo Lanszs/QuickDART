@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { supabase } from '../lib/supabase';
-import { fetchVerificationStatus } from '../api';
+import { fetchVerificationStatus, NonCivilianAccountError } from '../api';
 import type { RootStackParamList } from '../navigation';
 import { AuthHero, Button, Card, Field, Notice } from '../components/ui';
 import { colors, spacing } from '../theme';
@@ -42,7 +42,12 @@ export default function LoginScreen({ navigation }: Props) {
             if (signInError) throw signInError;
             await routeByStatus();
         } catch (e: any) {
-            setError(e?.message ?? 'Login failed.');
+            if (e instanceof NonCivilianAccountError) {
+                await supabase.auth.signOut();
+                setError(e.message);
+            } else {
+                setError(e?.message ?? 'Login failed.');
+            }
         } finally {
             setBusy(false);
         }

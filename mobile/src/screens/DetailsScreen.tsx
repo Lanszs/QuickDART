@@ -13,6 +13,7 @@ import {
     View,
 } from 'react-native';
 import * as Location from 'expo-location';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import {
     NominatimResult,
@@ -45,6 +46,11 @@ export default function DetailsScreen({ route, navigation }: Props) {
 
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const isVideo = asset.type === 'video';
+
+    const videoPlayer = useVideoPlayer(isVideo ? { uri: asset.uri } : null, (player) => {
+        player.loop = false;
+        player.muted = false;
+    });
 
     useEffect(() => {
         let cancelled = false;
@@ -161,6 +167,8 @@ export default function DetailsScreen({ route, navigation }: Props) {
             navigation.replace('Success', {
                 disasterType: payload.disaster_type,
                 damageLevel: payload.damage_level,
+                mediaUrl: payload.image_url || asset.uri,
+                isVideo,
             });
         } catch (err: any) {
             Alert.alert('Submission failed', err?.message ?? 'Please try again.');
@@ -188,9 +196,12 @@ export default function DetailsScreen({ route, navigation }: Props) {
                     {!isVideo ? (
                         <Image source={{ uri: asset.uri }} style={styles.preview} resizeMode="cover" />
                     ) : (
-                        <View style={[styles.preview, styles.videoPlaceholder]}>
-                            <Text style={styles.videoLabel}>VIDEO</Text>
-                        </View>
+                        <VideoView
+                            player={videoPlayer}
+                            style={styles.preview}
+                            contentFit="cover"
+                            nativeControls
+                        />
                     )}
                 </View>
 
@@ -366,8 +377,6 @@ const styles = StyleSheet.create({
         marginBottom: spacing.lg,
     },
     preview: { width: '100%', height: 200 },
-    videoPlaceholder: { alignItems: 'center', justifyContent: 'center' },
-    videoLabel: { color: '#fff', fontWeight: '800', letterSpacing: 2 },
     card: { marginBottom: spacing.md },
     row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.xs },
     rowLabel: { color: colors.textMuted, fontSize: 14 },

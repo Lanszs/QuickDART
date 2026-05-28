@@ -1,15 +1,20 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View } from 'react-native';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { signOut } from '../lib/supabase';
 import type { RootStackParamList } from '../navigation';
 import { AppHeader, Button, Card, IconBadge, Screen } from '../components/ui';
-import { colors, spacing, typography } from '../theme';
+import { colors, radius, spacing, typography } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Success'>;
 
 export default function SuccessScreen({ navigation, route }: Props) {
-    const { disasterType, damageLevel } = route.params;
+    const { disasterType, damageLevel, mediaUrl, isVideo } = route.params;
+
+    const videoPlayer = useVideoPlayer(isVideo && mediaUrl ? { uri: mediaUrl } : null, (player) => {
+        player.loop = false;
+    });
 
     const onSignOut = async () => {
         await signOut();
@@ -25,6 +30,16 @@ export default function SuccessScreen({ navigation, route }: Props) {
                 <Text style={styles.subtitle}>
                     Thank you. Emergency responders have been notified and your report is in the queue.
                 </Text>
+
+                {mediaUrl ? (
+                    <View style={styles.mediaBox}>
+                        {isVideo ? (
+                            <VideoView player={videoPlayer} style={styles.media} contentFit="cover" nativeControls />
+                        ) : (
+                            <Image source={{ uri: mediaUrl }} style={styles.media} resizeMode="cover" />
+                        )}
+                    </View>
+                ) : null}
 
                 <Card style={styles.summary}>
                     <Row label="Disaster type" value={disasterType} />
@@ -57,7 +72,15 @@ const styles = StyleSheet.create({
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     title: { ...typography.display },
     subtitle: { ...typography.subtitle, marginTop: spacing.sm, textAlign: 'center' },
-    summary: { marginTop: spacing.xxl, width: '100%' },
+    mediaBox: {
+        marginTop: spacing.xl,
+        width: '100%',
+        borderRadius: radius.lg,
+        overflow: 'hidden',
+        backgroundColor: '#000',
+    },
+    media: { width: '100%', height: 200 },
+    summary: { marginTop: spacing.lg, width: '100%' },
     row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.md },
     rowLabel: { color: colors.textMuted, fontSize: 14 },
     rowValue: { color: colors.text, fontWeight: '800', fontSize: 14 },
