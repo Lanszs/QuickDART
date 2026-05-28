@@ -83,7 +83,7 @@ export default function UploadScreen({ navigation }: Props) {
                     </Card>
                 ) : (
                     <>
-                        <Text style={styles.title}>What did you see?</Text>
+                        <Text style={styles.title}>Report an Incident</Text>
                         <Text style={styles.subtitle}>
                             Capture or attach a photo or video of the scene. Our AI assesses the
                             disaster type and damage automatically.
