@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import {
     Upload, Loader2, CheckCircle, XCircle, MapPin, Plane, AlertTriangle,
-    Image as ImageIcon, Video, Trash2, Save, RefreshCw, Eye, EyeOff
+    Image as ImageIcon, Video, Trash2, Save, RefreshCw, Eye, EyeOff, Search
 } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { generateAIDescription } from './lib/generateAIDescription';
@@ -40,10 +40,24 @@ const LocationPicker = ({ onPick, pinnedPosition }) => {
     return pinnedPosition ? <Marker position={pinnedPosition} icon={droneMarkerIcon} /> : null;
 };
 
+// Pans the map when the pinned location changes (e.g. after picking a suggestion)
+const RecenterMap = ({ position }) => {
+    const map = useMap();
+    useEffect(() => {
+        if (position) map.setView(position, map.getZoom());
+    }, [position?.[0], position?.[1]]); // eslint-disable-line
+    return null;
+};
+
 const DroneUpload = ({ myTeam, currentTeamId, onReportSaved }) => {
     const [items, setItems] = useState([]); // { id, file, status, progress, result, error, location: {lat,lng,label}, expanded }
     const inputRef = useRef(null);
     const [dragActive, setDragActive] = useState(false);
+
+    // --- LOCATION AUTOCOMPLETE STATE (mirrors the civilian report page) ---
+    const [locationSuggestions, setLocationSuggestions] = useState([]);
+    const [isSearchingLoc, setIsSearchingLoc] = useState(false);
+    const [search, setSearch] = useState({ id: null, query: '' }); // which item's label box is being typed in
 
     const teamBase = myTeam?.base_latitude && myTeam?.base_longitude
         ? [myTeam.base_latitude, myTeam.base_longitude]
@@ -57,6 +71,44 @@ const DroneUpload = ({ myTeam, currentTeamId, onReportSaved }) => {
             analyzeItem(nextQueued.id);
         }
     }, [itemsKey]); // eslint-disable-line
+
+    // Debounced geocoding search — same approach as the civilian page
+    useEffect(() => {
+        if (!search.id || !search.query || search.query.trim().length < 3) {
+            setLocationSuggestions([]);
+            return;
+        }
+        const delay = setTimeout(async () => {
+            setIsSearchingLoc(true);
+            try {
+                const query = `${search.query}, Philippines`;
+                const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`);
+                const results = await response.json();
+                setLocationSuggestions(Array.isArray(results) ? results : []);
+            } catch (error) {
+                console.error('Geocoding error:', error);
+                setLocationSuggestions([]);
+            } finally {
+                setIsSearchingLoc(false);
+            }
+        }, 300);
+        return () => clearTimeout(delay);
+    }, [search]);
+
+    const handleLocationInput = (id, value) => {
+        updateLocationLabel(id, value);
+        setSearch({ id, query: value });
+    };
+
+    const handleSelectSuggestion = (id, loc) => {
+        const shortName = loc.display_name.split(',').slice(0, 3).join(',');
+        setItems(prev => prev.map(i => i.id === id ? {
+            ...i,
+            location: { lat: parseFloat(loc.lat), lng: parseFloat(loc.lon), label: shortName },
+        } : i));
+        setLocationSuggestions([]);
+        setSearch({ id: null, query: '' });
+    };
 
     const onFilesChosen = (fileList) => {
         const newItems = Array.from(fileList).map(file => ({
@@ -306,13 +358,35 @@ const DroneUpload = ({ myTeam, currentTeamId, onReportSaved }) => {
                                             <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 flex items-center gap-1.5">
                                                 <MapPin size={12} /> Incident Location
                                             </p>
-                                            <input
-                                                type="text"
-                                                value={item.location.label}
-                                                onChange={(e) => updateLocationLabel(item.id, e.target.value)}
-                                                placeholder="Location name (e.g. Barangay 45, Main Street)"
-                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none"
-                                            />
+                                            <div className="relative mb-2">
+                                                <div className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100 transition-all">
+                                                    {isSearchingLoc && search.id === item.id
+                                                        ? <Loader2 className="animate-spin text-blue-500 flex-shrink-0" size={16} />
+                                                        : <Search className="text-gray-400 flex-shrink-0" size={16} />}
+                                                    <input
+                                                        type="text"
+                                                        value={item.location.label}
+                                                        onChange={(e) => handleLocationInput(item.id, e.target.value)}
+                                                        placeholder="Type an address or landmark…"
+                                                        className="bg-transparent outline-none w-full text-sm"
+                                                    />
+                                                </div>
+
+                                                {/* DROPDOWN SUGGESTIONS */}
+                                                {search.id === item.id && locationSuggestions.length > 0 && (
+                                                    <div className="absolute top-full left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-xl z-[1000] max-h-44 overflow-y-auto mt-1">
+                                                        {locationSuggestions.map((loc, index) => (
+                                                            <div
+                                                                key={index}
+                                                                onClick={() => handleSelectSuggestion(item.id, loc)}
+                                                                className="p-2.5 text-xs hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0 flex items-center gap-2"
+                                                            >
+                                                                <MapPin size={12} className="text-gray-400 flex-shrink-0" /> {loc.display_name}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
                                             <div className="h-56 rounded-lg overflow-hidden border border-gray-200">
                                                 <MapContainer
                                                     center={[item.location.lat, item.location.lng]}
@@ -328,6 +402,7 @@ const DroneUpload = ({ myTeam, currentTeamId, onReportSaved }) => {
                                                         onPick={([lat, lng]) => updateLocation(item.id, lat, lng)}
                                                         pinnedPosition={[item.location.lat, item.location.lng]}
                                                     />
+                                                    <RecenterMap position={[item.location.lat, item.location.lng]} />
                                                 </MapContainer>
                                             </div>
                                             <p className="text-xs text-gray-400 mt-1.5">Click on the map to move the pin. Current: {item.location.lat.toFixed(4)}, {item.location.lng.toFixed(4)}</p>
